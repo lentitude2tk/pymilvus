@@ -4,17 +4,34 @@ pull_request_rules:
       - or:
         - base=master
         - base~=2\.\d
-      - "status-success=Run Python Tests (3.8, windows-latest)"
-      - "status-success=Run Python Tests (3.12, windows-latest)"
-      - "status-success=Run Python Tests (3.8, ubuntu-latest)"
-      - "status-success=Run Python Tests (3.12, ubuntu-latest)"
-      - "status-success=Run Check Proto (3.8)"
-      - "status-success=Code lint check (3.8)"
-      - "status-success=Run Check Proto (3.12)"
-      - "status-success=Code lint check (3.12)"
+      # Require that Python tests succeed on Windows (any Python version, any Windows build)
+      - "status-success~=Run Python Tests \\(\\d+\\.\\d+, windows-\\S+\\)"
+      # Require that Python tests succeed on Ubuntu (any Python version, any Ubuntu build)
+      - "status-success~=Run Python Tests \\(\\d+\\.\\d+, ubuntu-\\S+\\)"
+      # Require that proto checks pass for any Python version
+      - "status-success~=Run Check Proto \\(\\d+\\.\\d+\\)"
+      # Require that code lint checks pass for any Python version
+      - "status-success~=Code lint check \\(\\d+\\.\\d+\\)"
+      # Require that patch coverage meets the threshold
+      - status-success=codecov/patch
     actions:
       label:
         add:
+          - ci-passed
+  - name: Remove ci-passed label when CI is not passing
+    conditions:
+      - or:
+        - base=master
+        - base~=2\.\d
+      - or:
+        - "-status-success~=Run Python Tests \\(\\d+\\.\\d+, windows-\\S+\\)"
+        - "-status-success~=Run Python Tests \\(\\d+\\.\\d+, ubuntu-\\S+\\)"
+        - "-status-success~=Run Check Proto \\(\\d+\\.\\d+\\)"
+        - "-status-success~=Code lint check \\(\\d+\\.\\d+\\)"
+        - -status-success=codecov/patch
+    actions:
+      label:
+        remove:
           - ci-passed
   - name: Add needs-dco label when DCO check failed
     conditions:

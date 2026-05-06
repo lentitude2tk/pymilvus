@@ -1,27 +1,40 @@
+import logging
 import time
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, ClassVar, Dict, List, Optional, TypeVar, Union
+
+import numpy as np
+import orjson
 
 from pymilvus.exceptions import (
     AutoIDException,
     ExceptionsMessage,
     InvalidConsistencyLevel,
 )
-from pymilvus.grpc_gen import common_pb2, rg_pb2
+from pymilvus.grpc_gen import common_pb2, rg_pb2, schema_pb2
 from pymilvus.grpc_gen import milvus_pb2 as milvus_types
+
+from . import utils
 
 Status = TypeVar("Status")
 ConsistencyLevel = common_pb2.ConsistencyLevel
+
+logger = logging.getLogger(__name__)
+
+ALWAYS_KEEP_ZERO_KEYS = frozenset(
+    {"scanned_remote_bytes", "scanned_total_bytes", "cache_hit_ratio"}
+)
 
 
 # OmitZeroDict: ignore the key-value pairs with value as 0 when printing
 class OmitZeroDict(dict):
     def omit_zero_len(self):
-        return len(dict(filter(lambda x: x[1], self.items())))
+        return len({k: v for k, v in self.items() if v or k in ALWAYS_KEEP_ZERO_KEYS})
 
-    # filter the key-value pairs with value as 0
+    # keep zero for specific keys, omit other zero values
     def __str__(self):
-        return str(dict(filter(lambda x: x[1], self.items())))
+        return str({k: v for k, v in self.items() if v or k in ALWAYS_KEEP_ZERO_KEYS})
 
     # no filter
     def __repr__(self):
@@ -84,28 +97,57 @@ class Status:
 
 
 class DataType(IntEnum):
-    NONE = 0
-    BOOL = 1
-    INT8 = 2
-    INT16 = 3
-    INT32 = 4
-    INT64 = 5
+    """
+    String of DataType is str of its value, e.g.: str(DataType.BOOL) == "1"
+    """
 
-    FLOAT = 10
-    DOUBLE = 11
+    NONE = 0  # schema_pb2.None, this is an invalid representation in python
+    BOOL = schema_pb2.Bool
+    INT8 = schema_pb2.Int8
+    INT16 = schema_pb2.Int16
+    INT32 = schema_pb2.Int32
+    INT64 = schema_pb2.Int64
 
-    STRING = 20
-    VARCHAR = 21
-    ARRAY = 22
-    JSON = 23
+    FLOAT = schema_pb2.Float
+    DOUBLE = schema_pb2.Double
 
-    BINARY_VECTOR = 100
-    FLOAT_VECTOR = 101
-    FLOAT16_VECTOR = 102
-    BFLOAT16_VECTOR = 103
-    SPARSE_FLOAT_VECTOR = 104
+    STRING = schema_pb2.String
+    VARCHAR = schema_pb2.VarChar
+    ARRAY = schema_pb2.Array
+    JSON = schema_pb2.JSON
+    GEOMETRY = schema_pb2.Geometry
+    TIMESTAMPTZ = schema_pb2.Timestamptz
+
+    BINARY_VECTOR = schema_pb2.BinaryVector
+    FLOAT_VECTOR = schema_pb2.FloatVector
+    FLOAT16_VECTOR = schema_pb2.Float16Vector
+    BFLOAT16_VECTOR = schema_pb2.BFloat16Vector
+    SPARSE_FLOAT_VECTOR = schema_pb2.SparseFloatVector
+    INT8_VECTOR = schema_pb2.Int8Vector
+
+    STRUCT = schema_pb2.Struct
+
+    # Internal use only - not exposed to users
+    _ARRAY_OF_VECTOR = schema_pb2.ArrayOfVector
+    _ARRAY_OF_STRUCT = schema_pb2.ArrayOfStruct
 
     UNKNOWN = 999
+
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+class FunctionType(IntEnum):
+    UNKNOWN = 0
+    BM25 = 1
+    TEXTEMBEDDING = 2
+    RERANK = 3
+    MINHASH = 4
+
+
+class HighlightType(IntEnum):
+    LEXICAL = 0
+    SEMANTIC = 1
 
 
 class RangeType(IntEnum):
@@ -173,6 +215,15 @@ class PlaceholderType(IntEnum):
     FLOAT16_VECTOR = 102
     BFLOAT16_VECTOR = 103
     SparseFloatVector = 104
+    Int8Vector = 105
+    VARCHAR = 21
+
+    EmbListBinaryVector = 300
+    EmbListFloatVector = 301
+    EmbListFloat16Vector = 302
+    EmbListBFloat16Vector = 303
+    EmbListSparseFloatVector = 304
+    EmbListInt8Vector = 305
 
 
 class State(IntEnum):
@@ -243,11 +294,15 @@ class CompactionState:
         self.in_timeout = in_timeout
         self.completed = completed
 
+    @property
+    def state_name(self):
+        return self.state.name
+
     def __repr__(self) -> str:
         return f"""
 CompactionState
  - compaction id: {self.compaction_id}
- - State: {self.state}
+ - State: {self.state.name}
  - executing plan number: {self.in_executing}
  - timeout plan number: {self.in_timeout}
  - complete plan number: {self.completed}
@@ -277,7 +332,7 @@ class CompactionPlans:
         return f"""
 Compaction Plans:
  - compaction id: {self.compaction_id}
- - state: {self.state}
+ - state: {self.state.name}
  - plans: {self.plans}
  """
 
@@ -345,6 +400,11 @@ class Shard:
 
 
 class Group:
+    """
+    This class represents replica info in orm format api, which is deprecated in milvus client api.
+    use `ReplicaInfo` instead.
+    """
+
     def __init__(
         self,
         group_id: int,
@@ -389,6 +449,10 @@ class Group:
 
 class Replica:
     """
+    This class represents replica info list in orm format api,
+    which is deprecated in milvus client api.
+    use `List[ReplicaInfo]` instead.
+
     Replica groups:
         - Group: <group_id:2>, <group_nodes:(1, 2, 3)>,
             <shards:[Shard: <shard_id:10>,
@@ -415,6 +479,49 @@ class Replica:
     @property
     def groups(self):
         return self._groups
+
+
+class ReplicaInfo:
+    def __init__(
+        self,
+        replica_id: int,
+        shards: List[str],
+        nodes: List[tuple],
+        resource_group: str,
+        num_outbound_node: dict,
+    ) -> None:
+        self._id = replica_id
+        self._shards = shards
+        self._nodes = tuple(nodes)
+        self._resource_group = resource_group
+        self._num_outbound_node = num_outbound_node
+
+    def __repr__(self) -> str:
+        return (
+            f"ReplicaInfo: <id:{self.id}>, <nodes:{self.group_nodes}>, "
+            f"<shards:{self.shards}>, <resource_group: {self.resource_group}>, "
+            f"<num_outbound_node: {self.num_outbound_node}>"
+        )
+
+    @property
+    def id(self):
+        return self._id
+
+    @property
+    def group_nodes(self):
+        return self._nodes
+
+    @property
+    def shards(self):
+        return self._shards
+
+    @property
+    def resource_group(self):
+        return self._resource_group
+
+    @property
+    def num_outbound_node(self):
+        return self._num_outbound_node
 
 
 class BulkInsertState:
@@ -682,6 +789,51 @@ class GrantInfo:
         return self._groups
 
 
+class PrivilegeGroupItem:
+    def __init__(self, privilege_group: str, privileges: List[milvus_types.PrivilegeEntity]):
+        self._privilege_group = privilege_group
+        privielges = []
+        for privilege in privileges:
+            if isinstance(privilege, milvus_types.PrivilegeEntity):
+                privielges.append(privilege.name)
+        self._privileges = tuple(privielges)
+
+    def __repr__(self) -> str:
+        return f"PrivilegeGroupItem: <privilege_group:{self.privilege_group}>, <privileges:{self.privileges}>"
+
+    @property
+    def privilege_group(self):
+        return self._privilege_group
+
+    @property
+    def privileges(self):
+        return self._privileges
+
+
+class PrivilegeGroupInfo:
+    """
+    PrivilegeGroupInfo groups:
+    - PrivilegeGroupItem: <privilege_group:group>, <privileges:('Load', 'CreateCollection')>
+    """
+
+    def __init__(self, results: List[milvus_types.PrivilegeGroupInfo]) -> None:
+        groups = []
+        for result in results:
+            if isinstance(result, milvus_types.PrivilegeGroupInfo):
+                groups.append(PrivilegeGroupItem(result.group_name, result.privileges))
+        self._groups = groups
+
+    def __repr__(self) -> str:
+        s = "PrivilegeGroupInfo groups:"
+        for g in self.groups:
+            s += f"\n- {g}"
+        return s
+
+    @property
+    def groups(self):
+        return self._groups
+
+
 class UserItem:
     def __init__(self, username: str, entities: List[milvus_types.RoleEntity]) -> None:
         self._username = username
@@ -902,6 +1054,246 @@ Attributes:
 """
 
 
+class HybridExtraList(list):
+    """
+    A list that holds partially eager and partially lazy row data.
+
+    - Primitive fields are extracted at initialization.
+    - Variable-length fields (array/string/json) are extracted lazily on access.
+
+    Attributes:
+        extra (dict): Extra metadata associated with the result set.
+    """
+
+    def __init__(
+        self,
+        lazy_field_data: List[Any],  # lazy extract fields
+        *args,
+        extra: Optional[Dict] = None,
+        dynamic_fields: Optional[List] = None,
+        strict_float32: bool = False,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._lazy_field_data = lazy_field_data
+        self._dynamic_fields = dynamic_fields
+        self.extra = OmitZeroDict(extra or {})
+        self._float_vector_np_array = {}
+        self._has_materialized_float_vector = False
+        self._strict_float32 = strict_float32
+        self._materialized_bitmap = [False] * len(self)
+
+    def _get_physical_index(self, field_data: Any, logical_index: int) -> int:
+        """Calculate physical index for nullable vectors with sparse storage.
+
+        Uses prefix sum for O(1) lookup instead of O(n) iteration.
+        Caches prefix sum in instance variable using field_data id as key.
+        """
+        if not hasattr(self, "_prefix_sum_cache"):
+            self._prefix_sum_cache = {}
+
+        field_id = id(field_data)
+        if field_id not in self._prefix_sum_cache:
+            if len(field_data.valid_data) == 0:
+                self._prefix_sum_cache[field_id] = None
+            else:
+                self._prefix_sum_cache[field_id] = np.cumsum(
+                    [0] + [1 if v else 0 for v in field_data.valid_data]
+                )
+        prefix_sum = self._prefix_sum_cache[field_id]
+        if prefix_sum is None:
+            return logical_index
+        return int(prefix_sum[logical_index])
+
+    def _extract_lazy_fields(self, index: int, field_data: Any, row_data: Dict) -> Any:
+        if field_data.type == DataType.JSON:
+            if len(field_data.valid_data) > 0 and field_data.valid_data[index] is False:
+                row_data[field_data.field_name] = None
+                return
+            try:
+                json_dict = orjson.loads(field_data.scalars.json_data.data[index])
+            except Exception as e:
+                logger.error(
+                    f"HybridExtraList::_extract_lazy_fields::Failed to load JSON data: {e}, original data: {field_data.scalars.json_data.data[index]}"
+                )
+                raise
+            if not field_data.is_dynamic:
+                row_data[field_data.field_name] = json_dict
+                return
+            if not self._dynamic_fields:
+                # Only update keys that don't exist in row_data
+                row_data.update({k: v for k, v in json_dict.items() if k not in row_data})
+                return
+            # Only update keys that don't exist in row_data and are in dynamic_fields
+            row_data.update(
+                {
+                    k: v
+                    for k, v in json_dict.items()
+                    if k in self._dynamic_fields and k not in row_data
+                }
+            )
+        elif field_data.type == DataType.FLOAT_VECTOR:
+            if len(field_data.valid_data) > 0 and field_data.valid_data[index] is False:
+                row_data[field_data.field_name] = None
+                return
+            dim = field_data.vectors.dim
+            phys_idx = self._get_physical_index(field_data, index)
+            start_pos = phys_idx * dim
+            end_pos = start_pos + dim
+            if len(field_data.vectors.float_vector.data) >= end_pos:
+                # Here we use numpy.array to convert the float64 values to numpy.float32 values,
+                # and return a list of numpy.float32 to users
+                # By using numpy.array, performance improved by 60% for topk=16384 dim=1536 case.
+                if self._strict_float32:
+                    row_data[field_data.field_name] = self._float_vector_np_array[
+                        field_data.field_name
+                    ][start_pos:end_pos]
+                else:
+                    row_data[field_data.field_name] = field_data.vectors.float_vector.data[
+                        start_pos:end_pos
+                    ]
+        elif field_data.type == DataType.BINARY_VECTOR:
+            if len(field_data.valid_data) > 0 and field_data.valid_data[index] is False:
+                row_data[field_data.field_name] = None
+                return
+            dim = field_data.vectors.dim
+            bytes_per_vector = dim // 8
+            phys_idx = self._get_physical_index(field_data, index)
+            start_pos = phys_idx * bytes_per_vector
+            end_pos = start_pos + bytes_per_vector
+            if len(field_data.vectors.binary_vector) >= end_pos:
+                row_data[field_data.field_name] = [
+                    field_data.vectors.binary_vector[start_pos:end_pos]
+                ]
+        elif field_data.type == DataType.BFLOAT16_VECTOR:
+            if len(field_data.valid_data) > 0 and field_data.valid_data[index] is False:
+                row_data[field_data.field_name] = None
+                return
+            dim = field_data.vectors.dim
+            bytes_per_vector = dim * 2
+            phys_idx = self._get_physical_index(field_data, index)
+            start_pos = phys_idx * bytes_per_vector
+            end_pos = start_pos + bytes_per_vector
+            if len(field_data.vectors.bfloat16_vector) >= end_pos:
+                row_data[field_data.field_name] = [
+                    field_data.vectors.bfloat16_vector[start_pos:end_pos]
+                ]
+        elif field_data.type == DataType.FLOAT16_VECTOR:
+            if len(field_data.valid_data) > 0 and field_data.valid_data[index] is False:
+                row_data[field_data.field_name] = None
+                return
+            dim = field_data.vectors.dim
+            bytes_per_vector = dim * 2
+            phys_idx = self._get_physical_index(field_data, index)
+            start_pos = phys_idx * bytes_per_vector
+            end_pos = start_pos + bytes_per_vector
+            if len(field_data.vectors.float16_vector) >= end_pos:
+                row_data[field_data.field_name] = [
+                    field_data.vectors.float16_vector[start_pos:end_pos]
+                ]
+        elif field_data.type == DataType.SPARSE_FLOAT_VECTOR:
+            if len(field_data.valid_data) > 0 and field_data.valid_data[index] is False:
+                row_data[field_data.field_name] = None
+                return
+            phys_idx = self._get_physical_index(field_data, index)
+            row_data[field_data.field_name] = utils.sparse_parse_single_row(
+                field_data.vectors.sparse_float_vector.contents[phys_idx]
+            )
+        elif field_data.type == DataType.INT8_VECTOR:
+            if len(field_data.valid_data) > 0 and field_data.valid_data[index] is False:
+                row_data[field_data.field_name] = None
+                return
+            dim = field_data.vectors.dim
+            phys_idx = self._get_physical_index(field_data, index)
+            start_pos = phys_idx * dim
+            end_pos = start_pos + dim
+            if len(field_data.vectors.int8_vector) >= end_pos:
+                row_data[field_data.field_name] = [
+                    field_data.vectors.int8_vector[start_pos:end_pos]
+                ]
+        elif field_data.type == DataType._ARRAY_OF_VECTOR:
+            # Handle array of vectors
+            if hasattr(field_data, "vectors") and hasattr(field_data.vectors, "vector_array"):
+                if index < len(field_data.vectors.vector_array.data):
+                    vector_data = field_data.vectors.vector_array.data[index]
+                    dim = vector_data.dim
+                    float_data = vector_data.float_vector.data
+                    num_vectors = len(float_data) // dim
+                    row_vectors = []
+                    for vec_idx in range(num_vectors):
+                        vec_start = vec_idx * dim
+                        vec_end = vec_start + dim
+                        row_vectors.append(list(float_data[vec_start:vec_end]))
+                    row_data[field_data.field_name] = row_vectors
+                else:
+                    row_data[field_data.field_name] = []
+            else:
+                row_data[field_data.field_name] = []
+        elif field_data.type == DataType._ARRAY_OF_STRUCT:
+            # Handle struct arrays - convert column format back to array of structs
+            if hasattr(field_data, "struct_arrays") and field_data.struct_arrays:
+                # Import here to avoid circular imports
+                from .entity_helper import extract_struct_array_from_column_data  # noqa: PLC0415
+
+                row_data[field_data.field_name] = extract_struct_array_from_column_data(
+                    field_data.struct_arrays, index
+                )
+            else:
+                row_data[field_data.field_name] = None
+
+    def __getitem__(self, index: Union[int, slice]):
+        if isinstance(index, slice):
+            results = []
+            for i in range(*index.indices(len(self))):
+                row = self[i]
+                results.append(row)
+            return results
+
+        if self._materialized_bitmap[index]:
+            return super().__getitem__(index)
+
+        self._pre_materialize_float_vector()
+
+        if index < 0:
+            index = len(self) + index
+
+        row = super().__getitem__(index)
+        lazy_index = row.pop("_original_idx", index)
+        for field_data in self._lazy_field_data:
+            self._extract_lazy_fields(lazy_index, field_data, row)
+
+        self._materialized_bitmap[index] = True
+        return row
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
+    def __str__(self) -> str:
+        preview = [str(self[i]) for i in range(min(10, len(self)))]
+        return f"data: {preview}{' ...' if len(self) > 10 else ''}, extra_info: {self.extra}"
+
+    def _pre_materialize_float_vector(self):
+        if not self._strict_float32 or self._has_materialized_float_vector:
+            return
+        for field_data in self._lazy_field_data:
+            if field_data.type == DataType.FLOAT_VECTOR:
+                self._float_vector_np_array[field_data.field_name] = np.array(
+                    field_data.vectors.float_vector.data, dtype=np.float32
+                )
+        self._has_materialized_float_vector = True
+
+    def materialize(self):
+        """Materializes all lazy-loaded fields for all rows."""
+        for i in range(len(self)):
+            # By simply accessing the item, __getitem__ will trigger
+            # the one-time materialization logic if it hasn't been done yet.
+            _ = self[i]
+        return self
+
+    __repr__ = __str__
+
+
 class ExtraList(list):
     """
     A list that can hold extra information.
@@ -918,23 +1310,30 @@ class ExtraList(list):
     def __str__(self) -> str:
         """Only print at most 10 query results"""
         if self.extra and self.extra.omit_zero_len() != 0:
-            return f"data: {list(map(str, self[:10]))} {'...' if len(self) > 10 else ''}, extra_info: {self.extra}"
-        return f"data: {list(map(str, self[:10]))} {'...' if len(self) > 10 else ''}"
+            return f"data: {list(map(str, self[:10]))}{' ...' if len(self) > 10 else ''}, extra_info: {self.extra}"
+        return f"data: {list(map(str, self[:10]))}{' ...' if len(self) > 10 else ''}"
 
     __repr__ = __str__
 
 
 def get_cost_from_status(status: Optional[common_pb2.Status] = None):
-    return int(status.extra_info["report_value"] if status and status.extra_info else "0")
+    return int(
+        status.extra_info["report_value"]
+        if status and status.extra_info and "report_value" in status.extra_info
+        else "0"
+    )
 
 
-def get_cost_extra(status: Optional[common_pb2.Status] = None):
-    return {"cost": get_cost_from_status(status)}
-
-
-# Construct extra dict, the cost unit is the vcu, similar to tokenlike the
-def construct_cost_extra(cost: int):
-    return {"cost": cost}
+def get_extra_info(status: Optional[common_pb2.Status] = None):
+    extra = {"cost": get_cost_from_status(status)}
+    if status and status.extra_info:
+        if "scanned_remote_bytes" in status.extra_info:
+            extra["scanned_remote_bytes"] = int(status.extra_info["scanned_remote_bytes"])
+        if "scanned_total_bytes" in status.extra_info:
+            extra["scanned_total_bytes"] = int(status.extra_info["scanned_total_bytes"])
+        if "cache_hit_ratio" in status.extra_info:
+            extra["cache_hit_ratio"] = float(status.extra_info["cache_hit_ratio"])
+    return extra
 
 
 class DatabaseInfo:
@@ -964,3 +1363,234 @@ class DatabaseInfo:
 
     def __str__(self) -> str:
         return f"DatabaseInfo(name={self.name}, properties={self.properties})"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Converts the DatabaseInfo instance to a dictionary."""
+        result = {"name": self.name}
+        result.update(self.properties)
+        return result
+
+
+class AnalyzeToken:
+    def __init__(
+        self, token: milvus_types.AnalyzerToken, with_hash: bool = False, with_detail: bool = False
+    ):
+        self.dict = {"token": token.token}
+        if with_detail:
+            self.dict["start_offset"] = token.start_offset
+            self.dict["end_offset"] = token.end_offset
+            self.dict["position"] = token.position
+            self.dict["position_length"] = token.position_length
+        if with_hash:
+            self.dict["hash"] = token.hash
+
+    @property
+    def token(self):
+        return self.dict["token"]
+
+    @property
+    def start_offset(self):
+        return self.dict["start_offset"]
+
+    @property
+    def end_offset(self):
+        return self.dict["end_offset"]
+
+    @property
+    def position(self):
+        return self.dict["position"]
+
+    @property
+    def position_length(self):
+        return self.dict["position_length"]
+
+    @property
+    def hash(self):
+        return self.dict["hash"]
+
+    def __getitem__(self, key: str):
+        return self.dict[key]
+
+    def __str__(self):
+        return str(self.dict)
+
+    __repr__ = __str__
+
+
+class AnalyzeResult:
+    def __init__(
+        self, info: milvus_types.AnalyzerResult, with_hash: bool = False, with_detail: bool = False
+    ) -> None:
+        if not with_detail and not with_hash:
+            self.tokens = [token.token for token in info.tokens]
+        else:
+            self.tokens = [AnalyzeToken(token, with_hash, with_detail) for token in info.tokens]
+
+    def __str__(self) -> str:
+        return str(self.tokens)
+
+    __repr__ = __str__
+
+
+class FileResourceInfo:
+    def __init__(self, info: milvus_types.FileResourceInfo) -> None:
+        self.name = info.name
+        self.path = info.path
+
+    def __str__(self) -> str:
+        return f"(name={self.name}, path={self.path})"
+
+    def __repr__(self):
+        return self.__str__()
+
+
+@dataclass
+class SegmentInfo:
+    segment_id: int
+    collection_id: int
+    collection_name: str
+    num_rows: int
+    is_sorted: bool
+    state: common_pb2.SegmentState
+    level: common_pb2.SegmentLevel
+    storage_version: int
+
+    @property
+    def state_name(self) -> str:
+        return common_pb2.SegmentState.Name(self.state)
+
+    @property
+    def level_name(self) -> str:
+        return common_pb2.SegmentLevel.Name(self.level)
+
+    def __repr__(self) -> str:
+        return (
+            f"SegmentInfo(segment_id={self.segment_id}, "
+            f"collection_id={self.collection_id}, "
+            f"collection_name='{self.collection_name}', "
+            f"num_rows={self.num_rows}, "
+            f"is_sorted={self.is_sorted}, "
+            f"state='{self.state_name}', "
+            f"level='{self.level_name}', "
+            f"storage_version={self.storage_version})"
+        )
+
+
+@dataclass
+class LoadedSegmentInfo(SegmentInfo):
+    partition_id: int
+    index_name: str
+    index_id: int
+    node_ids: List[int]
+    mem_size: int
+
+    def __repr__(self) -> str:
+        return (
+            f"LoadedSegmentInfo(segment_id={self.segment_id}, "
+            f"collection_id={self.collection_id}, "
+            f"partition_id={self.partition_id}, "
+            f"collection_name='{self.collection_name}', "
+            f"num_rows={self.num_rows}, "
+            f"is_sorted={self.is_sorted}, "
+            f"state='{self.state_name}', "
+            f"level='{self.level_name}', "
+            f"index_name='{self.index_name}', "
+            f"index_id={self.index_id}, "
+            f"node_ids={self.node_ids}, "
+            f"storage_version={self.storage_version}, "
+            f"mem_size={self.mem_size})"
+        )
+
+
+@dataclass
+class SnapshotInfo:
+    """Information about a snapshot.
+
+    Attributes:
+        name: The snapshot name.
+        description: Description of the snapshot.
+        collection_name: The collection that was snapshotted.
+        partition_names: List of partition names included in the snapshot.
+        create_ts: Creation timestamp in milliseconds.
+        s3_location: S3 storage location of the snapshot.
+    """
+
+    name: str
+    description: str
+    collection_name: str
+    partition_names: List[str]
+    create_ts: int
+    s3_location: str
+
+
+@dataclass
+class RestoreSnapshotJobInfo:
+    """Information about a restore snapshot job.
+
+    Attributes:
+        job_id: The restore job ID.
+        snapshot_name: The snapshot name being restored.
+        db_name: The target database name.
+        collection_name: The target collection name.
+        state: Current state of the restore job. Possible values:
+            - 'RestoreSnapshotNone'
+            - 'RestoreSnapshotPending'
+            - 'RestoreSnapshotExecuting'
+            - 'RestoreSnapshotCompleted'
+            - 'RestoreSnapshotFailed'
+        progress: Progress percentage (0-100).
+        reason: Error reason if the job failed.
+        start_time: Start timestamp in milliseconds.
+        time_cost: Time cost in milliseconds.
+    """
+
+    job_id: int
+    snapshot_name: str
+    db_name: str
+    collection_name: str
+    state: str
+    progress: int
+    reason: str
+    start_time: int
+    time_cost: int
+
+
+@dataclass
+class RefreshExternalCollectionJobInfo:
+    """Information about an external collection refresh job.
+
+    Attributes:
+        job_id: The refresh job ID.
+        collection_name: The collection being refreshed.
+        state: Current state (proto enum name, e.g. RefreshPending, RefreshCompleted).
+        progress: Progress percentage (0-100).
+        reason: Error message if failed.
+        external_source: External source used for this job.
+        start_time: Job start timestamp in milliseconds.
+        end_time: Job end timestamp in milliseconds (0 if not completed).
+    """
+
+    job_id: int
+    collection_name: str
+    state: str
+    progress: int
+    reason: str
+    external_source: str
+    start_time: int
+    end_time: int
+
+
+def parse_refresh_job_info(
+    info: "milvus_types.RefreshExternalCollectionJobInfo",
+) -> RefreshExternalCollectionJobInfo:
+    """Parse a protobuf RefreshExternalCollectionJobInfo into a dataclass."""
+    return RefreshExternalCollectionJobInfo(
+        job_id=info.job_id,
+        collection_name=info.collection_name,
+        state=milvus_types.RefreshExternalCollectionState.Name(info.state),
+        progress=info.progress,
+        reason=info.reason,
+        external_source=info.external_source,
+        start_time=info.start_time,
+        end_time=info.end_time,
+    )

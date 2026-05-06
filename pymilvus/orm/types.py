@@ -71,21 +71,16 @@ def is_numeric_datatype(data_type: DataType):
     return is_float_datatype(data_type) or is_integer_datatype(data_type)
 
 
-# pylint: disable=too-many-return-statements
-def infer_dtype_by_scalar_data(data: Any):
-    if isinstance(data, float):
+def infer_dtype_by_scalar_data(data: Any, dtype: DataType = None):
+    if isinstance(data, list):
+        return DataType.ARRAY
+    if isinstance(data, np.float32) or (is_float(data) and dtype == DataType.FLOAT):
+        return DataType.FLOAT
+    if isinstance(data, (float, np.float64, np.double)) or is_float(data):
         return DataType.DOUBLE
     if isinstance(data, bool):
         return DataType.BOOL
-    if isinstance(data, int):
-        return DataType.INT64
-    if isinstance(data, str):
-        return DataType.VARCHAR
-    if isinstance(data, np.float64):
-        return DataType.DOUBLE
-    if isinstance(data, np.float32):
-        return DataType.FLOAT
-    if isinstance(data, np.int64):
+    if isinstance(data, (int, np.int64)):
         return DataType.INT64
     if isinstance(data, np.int32):
         return DataType.INT32
@@ -93,14 +88,10 @@ def infer_dtype_by_scalar_data(data: Any):
         return DataType.INT16
     if isinstance(data, np.int8):
         return DataType.INT8
-    if isinstance(data, np.bool8):
-        return DataType.BOOL
-    if isinstance(data, np.bool_):
-        return DataType.BOOL
+    if isinstance(data, str):
+        return DataType.VARCHAR
     if isinstance(data, bytes):
         return DataType.BINARY_VECTOR
-    if is_float(data):
-        return DataType.DOUBLE
 
     return DataType.UNKNOWN
 
@@ -121,7 +112,11 @@ def infer_dtype_bydata(data: Any):
             failed = True
         if not failed:
             d_type = dtype_str_map.get(type_str, DataType.UNKNOWN)
-            return DataType.FLOAT_VECTOR if is_numeric_datatype(d_type) else DataType.UNKNOWN
+            if is_numeric_datatype(d_type):
+                return DataType.FLOAT_VECTOR
+            if d_type != DataType.UNKNOWN:
+                return DataType.ARRAY
+            return DataType.UNKNOWN
 
     if d_type == DataType.UNKNOWN:
         try:

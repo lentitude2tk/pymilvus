@@ -66,6 +66,11 @@ class ErrorCode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     TimeTickLongDelay: _ClassVar[ErrorCode]
     NotReadyServe: _ClassVar[ErrorCode]
     NotReadyCoordActivating: _ClassVar[ErrorCode]
+    CreatePrivilegeGroupFailure: _ClassVar[ErrorCode]
+    DropPrivilegeGroupFailure: _ClassVar[ErrorCode]
+    ListPrivilegeGroupsFailure: _ClassVar[ErrorCode]
+    OperatePrivilegeGroupFailure: _ClassVar[ErrorCode]
+    SchemaMismatch: _ClassVar[ErrorCode]
     DataCoordNA: _ClassVar[ErrorCode]
     DDRequestRace: _ClassVar[ErrorCode]
 
@@ -104,8 +109,15 @@ class PlaceholderType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     Float16Vector: _ClassVar[PlaceholderType]
     BFloat16Vector: _ClassVar[PlaceholderType]
     SparseFloatVector: _ClassVar[PlaceholderType]
+    Int8Vector: _ClassVar[PlaceholderType]
     Int64: _ClassVar[PlaceholderType]
     VarChar: _ClassVar[PlaceholderType]
+    EmbListBinaryVector: _ClassVar[PlaceholderType]
+    EmbListFloatVector: _ClassVar[PlaceholderType]
+    EmbListFloat16Vector: _ClassVar[PlaceholderType]
+    EmbListBFloat16Vector: _ClassVar[PlaceholderType]
+    EmbListSparseFloatVector: _ClassVar[PlaceholderType]
+    EmbListInt8Vector: _ClassVar[PlaceholderType]
 
 class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -125,6 +137,11 @@ class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RenameCollection: _ClassVar[MsgType]
     DescribeAlias: _ClassVar[MsgType]
     ListAliases: _ClassVar[MsgType]
+    AlterCollectionField: _ClassVar[MsgType]
+    AddCollectionFunction: _ClassVar[MsgType]
+    AlterCollectionFunction: _ClassVar[MsgType]
+    DropCollectionFunction: _ClassVar[MsgType]
+    TruncateCollection: _ClassVar[MsgType]
     CreatePartition: _ClassVar[MsgType]
     DropPartition: _ClassVar[MsgType]
     HasPartition: _ClassVar[MsgType]
@@ -151,6 +168,11 @@ class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     Flush: _ClassVar[MsgType]
     ResendSegmentStats: _ClassVar[MsgType]
     Upsert: _ClassVar[MsgType]
+    ManualFlush: _ClassVar[MsgType]
+    FlushSegment: _ClassVar[MsgType]
+    CreateSegment: _ClassVar[MsgType]
+    Import: _ClassVar[MsgType]
+    FlushAll: _ClassVar[MsgType]
     Search: _ClassVar[MsgType]
     SearchResult: _ClassVar[MsgType]
     GetIndexState: _ClassVar[MsgType]
@@ -170,6 +192,7 @@ class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     UnsubDmChannel: _ClassVar[MsgType]
     GetDistribution: _ClassVar[MsgType]
     SyncDistribution: _ClassVar[MsgType]
+    RunAnalyzer: _ClassVar[MsgType]
     SegmentInfo: _ClassVar[MsgType]
     SystemInfo: _ClassVar[MsgType]
     GetRecoveryInfo: _ClassVar[MsgType]
@@ -186,6 +209,7 @@ class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     Connect: _ClassVar[MsgType]
     ListClientInfos: _ClassVar[MsgType]
     AllocTimestamp: _ClassVar[MsgType]
+    Replicate: _ClassVar[MsgType]
     CreateCredential: _ClassVar[MsgType]
     GetCredential: _ClassVar[MsgType]
     DeleteCredential: _ClassVar[MsgType]
@@ -201,6 +225,11 @@ class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     SelectGrant: _ClassVar[MsgType]
     RefreshPolicyInfoCache: _ClassVar[MsgType]
     ListPolicy: _ClassVar[MsgType]
+    CreatePrivilegeGroup: _ClassVar[MsgType]
+    DropPrivilegeGroup: _ClassVar[MsgType]
+    ListPrivilegeGroups: _ClassVar[MsgType]
+    OperatePrivilegeGroup: _ClassVar[MsgType]
+    OperatePrivilegeV2: _ClassVar[MsgType]
     CreateResourceGroup: _ClassVar[MsgType]
     DropResourceGroup: _ClassVar[MsgType]
     ListResourceGroups: _ClassVar[MsgType]
@@ -213,6 +242,21 @@ class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ListDatabases: _ClassVar[MsgType]
     AlterDatabase: _ClassVar[MsgType]
     DescribeDatabase: _ClassVar[MsgType]
+    AddCollectionField: _ClassVar[MsgType]
+    AlterWAL: _ClassVar[MsgType]
+    CreateSnapshot: _ClassVar[MsgType]
+    DropSnapshot: _ClassVar[MsgType]
+    ListSnapshots: _ClassVar[MsgType]
+    DescribeSnapshot: _ClassVar[MsgType]
+    RestoreSnapshot: _ClassVar[MsgType]
+    GetRestoreSnapshotState: _ClassVar[MsgType]
+    ListRestoreSnapshotJobs: _ClassVar[MsgType]
+    PinSnapshotData: _ClassVar[MsgType]
+    UnpinSnapshotData: _ClassVar[MsgType]
+    AlterCollectionSchema: _ClassVar[MsgType]
+    RefreshExternalCollection: _ClassVar[MsgType]
+    GetRefreshExternalCollectionProgress: _ClassVar[MsgType]
+    ListRefreshExternalCollectionJobs: _ClassVar[MsgType]
 
 class DslType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -302,6 +346,41 @@ class ObjectPrivilege(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     PrivilegeUpdateResourceGroups: _ClassVar[ObjectPrivilege]
     PrivilegeAlterDatabase: _ClassVar[ObjectPrivilege]
     PrivilegeDescribeDatabase: _ClassVar[ObjectPrivilege]
+    PrivilegeBackupRBAC: _ClassVar[ObjectPrivilege]
+    PrivilegeRestoreRBAC: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupReadOnly: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupReadWrite: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupAdmin: _ClassVar[ObjectPrivilege]
+    PrivilegeCreatePrivilegeGroup: _ClassVar[ObjectPrivilege]
+    PrivilegeDropPrivilegeGroup: _ClassVar[ObjectPrivilege]
+    PrivilegeListPrivilegeGroups: _ClassVar[ObjectPrivilege]
+    PrivilegeOperatePrivilegeGroup: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupClusterReadOnly: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupClusterReadWrite: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupClusterAdmin: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupDatabaseReadOnly: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupDatabaseReadWrite: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupDatabaseAdmin: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupCollectionReadOnly: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupCollectionReadWrite: _ClassVar[ObjectPrivilege]
+    PrivilegeGroupCollectionAdmin: _ClassVar[ObjectPrivilege]
+    PrivilegeGetImportProgress: _ClassVar[ObjectPrivilege]
+    PrivilegeListImport: _ClassVar[ObjectPrivilege]
+    PrivilegeAddCollectionField: _ClassVar[ObjectPrivilege]
+    PrivilegeAddFileResource: _ClassVar[ObjectPrivilege]
+    PrivilegeRemoveFileResource: _ClassVar[ObjectPrivilege]
+    PrivilegeListFileResources: _ClassVar[ObjectPrivilege]
+    PrivilegeUpdateReplicateConfiguration: _ClassVar[ObjectPrivilege]
+    PrivilegeCreateSnapshot: _ClassVar[ObjectPrivilege]
+    PrivilegeDropSnapshot: _ClassVar[ObjectPrivilege]
+    PrivilegeDescribeSnapshot: _ClassVar[ObjectPrivilege]
+    PrivilegeListSnapshots: _ClassVar[ObjectPrivilege]
+    PrivilegeRestoreSnapshot: _ClassVar[ObjectPrivilege]
+    PrivilegeAlterCollectionSchema: _ClassVar[ObjectPrivilege]
+    PrivilegeGetReplicateConfiguration: _ClassVar[ObjectPrivilege]
+    PrivilegeRefreshExternalCollection: _ClassVar[ObjectPrivilege]
+    PrivilegePinSnapshotData: _ClassVar[ObjectPrivilege]
+    PrivilegeUnpinSnapshotData: _ClassVar[ObjectPrivilege]
 
 class StateCode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -317,6 +396,25 @@ class LoadState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     LoadStateNotLoad: _ClassVar[LoadState]
     LoadStateLoading: _ClassVar[LoadState]
     LoadStateLoaded: _ClassVar[LoadState]
+
+class LoadPriority(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    HIGH: _ClassVar[LoadPriority]
+    LOW: _ClassVar[LoadPriority]
+
+class WALName(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    Unknown: _ClassVar[WALName]
+    RocksMQ: _ClassVar[WALName]
+    Pulsar: _ClassVar[WALName]
+    Kafka: _ClassVar[WALName]
+    WoodPecker: _ClassVar[WALName]
+    Test: _ClassVar[WALName]
+
+class HighlightType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    Lexical: _ClassVar[HighlightType]
+    Semantic: _ClassVar[HighlightType]
 Success: ErrorCode
 UnexpectedError: ErrorCode
 ConnectFailed: ErrorCode
@@ -374,6 +472,11 @@ DiskQuotaExhausted: ErrorCode
 TimeTickLongDelay: ErrorCode
 NotReadyServe: ErrorCode
 NotReadyCoordActivating: ErrorCode
+CreatePrivilegeGroupFailure: ErrorCode
+DropPrivilegeGroupFailure: ErrorCode
+ListPrivilegeGroupsFailure: ErrorCode
+OperatePrivilegeGroupFailure: ErrorCode
+SchemaMismatch: ErrorCode
 DataCoordNA: ErrorCode
 DDRequestRace: ErrorCode
 IndexStateNone: IndexState
@@ -400,8 +503,15 @@ FloatVector: PlaceholderType
 Float16Vector: PlaceholderType
 BFloat16Vector: PlaceholderType
 SparseFloatVector: PlaceholderType
+Int8Vector: PlaceholderType
 Int64: PlaceholderType
 VarChar: PlaceholderType
+EmbListBinaryVector: PlaceholderType
+EmbListFloatVector: PlaceholderType
+EmbListFloat16Vector: PlaceholderType
+EmbListBFloat16Vector: PlaceholderType
+EmbListSparseFloatVector: PlaceholderType
+EmbListInt8Vector: PlaceholderType
 Undefined: MsgType
 CreateCollection: MsgType
 DropCollection: MsgType
@@ -418,6 +528,11 @@ AlterCollection: MsgType
 RenameCollection: MsgType
 DescribeAlias: MsgType
 ListAliases: MsgType
+AlterCollectionField: MsgType
+AddCollectionFunction: MsgType
+AlterCollectionFunction: MsgType
+DropCollectionFunction: MsgType
+TruncateCollection: MsgType
 CreatePartition: MsgType
 DropPartition: MsgType
 HasPartition: MsgType
@@ -444,6 +559,11 @@ Delete: MsgType
 Flush: MsgType
 ResendSegmentStats: MsgType
 Upsert: MsgType
+ManualFlush: MsgType
+FlushSegment: MsgType
+CreateSegment: MsgType
+Import: MsgType
+FlushAll: MsgType
 Search: MsgType
 SearchResult: MsgType
 GetIndexState: MsgType
@@ -463,6 +583,7 @@ GetReplicas: MsgType
 UnsubDmChannel: MsgType
 GetDistribution: MsgType
 SyncDistribution: MsgType
+RunAnalyzer: MsgType
 SegmentInfo: MsgType
 SystemInfo: MsgType
 GetRecoveryInfo: MsgType
@@ -479,6 +600,7 @@ DataNodeTt: MsgType
 Connect: MsgType
 ListClientInfos: MsgType
 AllocTimestamp: MsgType
+Replicate: MsgType
 CreateCredential: MsgType
 GetCredential: MsgType
 DeleteCredential: MsgType
@@ -494,6 +616,11 @@ OperatePrivilege: MsgType
 SelectGrant: MsgType
 RefreshPolicyInfoCache: MsgType
 ListPolicy: MsgType
+CreatePrivilegeGroup: MsgType
+DropPrivilegeGroup: MsgType
+ListPrivilegeGroups: MsgType
+OperatePrivilegeGroup: MsgType
+OperatePrivilegeV2: MsgType
 CreateResourceGroup: MsgType
 DropResourceGroup: MsgType
 ListResourceGroups: MsgType
@@ -506,6 +633,21 @@ DropDatabase: MsgType
 ListDatabases: MsgType
 AlterDatabase: MsgType
 DescribeDatabase: MsgType
+AddCollectionField: MsgType
+AlterWAL: MsgType
+CreateSnapshot: MsgType
+DropSnapshot: MsgType
+ListSnapshots: MsgType
+DescribeSnapshot: MsgType
+RestoreSnapshot: MsgType
+GetRestoreSnapshotState: MsgType
+ListRestoreSnapshotJobs: MsgType
+PinSnapshotData: MsgType
+UnpinSnapshotData: MsgType
+AlterCollectionSchema: MsgType
+RefreshExternalCollection: MsgType
+GetRefreshExternalCollectionProgress: MsgType
+ListRefreshExternalCollectionJobs: MsgType
 Dsl: DslType
 BoolExprV1: DslType
 UndefiedState: CompactionState
@@ -577,6 +719,41 @@ PrivilegeListAliases: ObjectPrivilege
 PrivilegeUpdateResourceGroups: ObjectPrivilege
 PrivilegeAlterDatabase: ObjectPrivilege
 PrivilegeDescribeDatabase: ObjectPrivilege
+PrivilegeBackupRBAC: ObjectPrivilege
+PrivilegeRestoreRBAC: ObjectPrivilege
+PrivilegeGroupReadOnly: ObjectPrivilege
+PrivilegeGroupReadWrite: ObjectPrivilege
+PrivilegeGroupAdmin: ObjectPrivilege
+PrivilegeCreatePrivilegeGroup: ObjectPrivilege
+PrivilegeDropPrivilegeGroup: ObjectPrivilege
+PrivilegeListPrivilegeGroups: ObjectPrivilege
+PrivilegeOperatePrivilegeGroup: ObjectPrivilege
+PrivilegeGroupClusterReadOnly: ObjectPrivilege
+PrivilegeGroupClusterReadWrite: ObjectPrivilege
+PrivilegeGroupClusterAdmin: ObjectPrivilege
+PrivilegeGroupDatabaseReadOnly: ObjectPrivilege
+PrivilegeGroupDatabaseReadWrite: ObjectPrivilege
+PrivilegeGroupDatabaseAdmin: ObjectPrivilege
+PrivilegeGroupCollectionReadOnly: ObjectPrivilege
+PrivilegeGroupCollectionReadWrite: ObjectPrivilege
+PrivilegeGroupCollectionAdmin: ObjectPrivilege
+PrivilegeGetImportProgress: ObjectPrivilege
+PrivilegeListImport: ObjectPrivilege
+PrivilegeAddCollectionField: ObjectPrivilege
+PrivilegeAddFileResource: ObjectPrivilege
+PrivilegeRemoveFileResource: ObjectPrivilege
+PrivilegeListFileResources: ObjectPrivilege
+PrivilegeUpdateReplicateConfiguration: ObjectPrivilege
+PrivilegeCreateSnapshot: ObjectPrivilege
+PrivilegeDropSnapshot: ObjectPrivilege
+PrivilegeDescribeSnapshot: ObjectPrivilege
+PrivilegeListSnapshots: ObjectPrivilege
+PrivilegeRestoreSnapshot: ObjectPrivilege
+PrivilegeAlterCollectionSchema: ObjectPrivilege
+PrivilegeGetReplicateConfiguration: ObjectPrivilege
+PrivilegeRefreshExternalCollection: ObjectPrivilege
+PrivilegePinSnapshotData: ObjectPrivilege
+PrivilegeUnpinSnapshotData: ObjectPrivilege
 Initializing: StateCode
 Healthy: StateCode
 Abnormal: StateCode
@@ -586,6 +763,16 @@ LoadStateNotExist: LoadState
 LoadStateNotLoad: LoadState
 LoadStateLoading: LoadState
 LoadStateLoaded: LoadState
+HIGH: LoadPriority
+LOW: LoadPriority
+Unknown: WALName
+RocksMQ: WALName
+Pulsar: WALName
+Kafka: WALName
+WoodPecker: WALName
+Test: WALName
+Lexical: HighlightType
+Semantic: HighlightType
 PRIVILEGE_EXT_OBJ_FIELD_NUMBER: _ClassVar[int]
 privilege_ext_obj: _descriptor.FieldDescriptor
 
@@ -635,14 +822,16 @@ class Blob(_message.Message):
     def __init__(self, value: _Optional[bytes] = ...) -> None: ...
 
 class PlaceholderValue(_message.Message):
-    __slots__ = ("tag", "type", "values")
+    __slots__ = ("tag", "type", "values", "element_level")
     TAG_FIELD_NUMBER: _ClassVar[int]
     TYPE_FIELD_NUMBER: _ClassVar[int]
     VALUES_FIELD_NUMBER: _ClassVar[int]
+    ELEMENT_LEVEL_FIELD_NUMBER: _ClassVar[int]
     tag: str
     type: PlaceholderType
     values: _containers.RepeatedScalarFieldContainer[bytes]
-    def __init__(self, tag: _Optional[str] = ..., type: _Optional[_Union[PlaceholderType, str]] = ..., values: _Optional[_Iterable[bytes]] = ...) -> None: ...
+    element_level: bool
+    def __init__(self, tag: _Optional[str] = ..., type: _Optional[_Union[PlaceholderType, str]] = ..., values: _Optional[_Iterable[bytes]] = ..., element_level: bool = ...) -> None: ...
 
 class PlaceholderGroup(_message.Message):
     __slots__ = ("placeholders",)
@@ -684,12 +873,14 @@ class MsgBase(_message.Message):
     def __init__(self, msg_type: _Optional[_Union[MsgType, str]] = ..., msgID: _Optional[int] = ..., timestamp: _Optional[int] = ..., sourceID: _Optional[int] = ..., targetID: _Optional[int] = ..., properties: _Optional[_Mapping[str, str]] = ..., replicateInfo: _Optional[_Union[ReplicateInfo, _Mapping]] = ...) -> None: ...
 
 class ReplicateInfo(_message.Message):
-    __slots__ = ("isReplicate", "msgTimestamp")
+    __slots__ = ("isReplicate", "msgTimestamp", "replicateID")
     ISREPLICATE_FIELD_NUMBER: _ClassVar[int]
     MSGTIMESTAMP_FIELD_NUMBER: _ClassVar[int]
+    REPLICATEID_FIELD_NUMBER: _ClassVar[int]
     isReplicate: bool
     msgTimestamp: int
-    def __init__(self, isReplicate: bool = ..., msgTimestamp: _Optional[int] = ...) -> None: ...
+    replicateID: str
+    def __init__(self, isReplicate: bool = ..., msgTimestamp: _Optional[int] = ..., replicateID: _Optional[str] = ...) -> None: ...
 
 class MsgHeader(_message.Message):
     __slots__ = ("base",)
@@ -748,6 +939,66 @@ class ClientInfo(_message.Message):
     reserved: _containers.ScalarMap[str, str]
     def __init__(self, sdk_type: _Optional[str] = ..., sdk_version: _Optional[str] = ..., local_time: _Optional[str] = ..., user: _Optional[str] = ..., host: _Optional[str] = ..., reserved: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
+class Metrics(_message.Message):
+    __slots__ = ("request_count", "success_count", "error_count", "avg_latency_ms", "p99_latency_ms", "max_latency_ms")
+    REQUEST_COUNT_FIELD_NUMBER: _ClassVar[int]
+    SUCCESS_COUNT_FIELD_NUMBER: _ClassVar[int]
+    ERROR_COUNT_FIELD_NUMBER: _ClassVar[int]
+    AVG_LATENCY_MS_FIELD_NUMBER: _ClassVar[int]
+    P99_LATENCY_MS_FIELD_NUMBER: _ClassVar[int]
+    MAX_LATENCY_MS_FIELD_NUMBER: _ClassVar[int]
+    request_count: int
+    success_count: int
+    error_count: int
+    avg_latency_ms: float
+    p99_latency_ms: float
+    max_latency_ms: float
+    def __init__(self, request_count: _Optional[int] = ..., success_count: _Optional[int] = ..., error_count: _Optional[int] = ..., avg_latency_ms: _Optional[float] = ..., p99_latency_ms: _Optional[float] = ..., max_latency_ms: _Optional[float] = ...) -> None: ...
+
+class OperationMetrics(_message.Message):
+    __slots__ = ("operation", "collection_metrics")
+    class CollectionMetricsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: Metrics
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[Metrics, _Mapping]] = ...) -> None: ...
+    OPERATION_FIELD_NUMBER: _ClassVar[int]
+    GLOBAL_FIELD_NUMBER: _ClassVar[int]
+    COLLECTION_METRICS_FIELD_NUMBER: _ClassVar[int]
+    operation: str
+    collection_metrics: _containers.MessageMap[str, Metrics]
+    def __init__(self, operation: _Optional[str] = ..., collection_metrics: _Optional[_Mapping[str, Metrics]] = ..., **kwargs) -> None: ...
+
+class ClientCommand(_message.Message):
+    __slots__ = ("command_id", "command_type", "payload", "create_time", "persistent", "target_scope")
+    COMMAND_ID_FIELD_NUMBER: _ClassVar[int]
+    COMMAND_TYPE_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    CREATE_TIME_FIELD_NUMBER: _ClassVar[int]
+    PERSISTENT_FIELD_NUMBER: _ClassVar[int]
+    TARGET_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    command_id: str
+    command_type: str
+    payload: bytes
+    create_time: int
+    persistent: bool
+    target_scope: str
+    def __init__(self, command_id: _Optional[str] = ..., command_type: _Optional[str] = ..., payload: _Optional[bytes] = ..., create_time: _Optional[int] = ..., persistent: bool = ..., target_scope: _Optional[str] = ...) -> None: ...
+
+class CommandReply(_message.Message):
+    __slots__ = ("command_id", "success", "error_message", "payload")
+    COMMAND_ID_FIELD_NUMBER: _ClassVar[int]
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    command_id: str
+    success: bool
+    error_message: str
+    payload: bytes
+    def __init__(self, command_id: _Optional[str] = ..., success: bool = ..., error_message: _Optional[str] = ..., payload: _Optional[bytes] = ...) -> None: ...
+
 class ServerInfo(_message.Message):
     __slots__ = ("build_tags", "build_time", "git_commit", "go_version", "deploy_mode", "reserved")
     class ReservedEntry(_message.Message):
@@ -780,3 +1031,157 @@ class NodeInfo(_message.Message):
     address: str
     hostname: str
     def __init__(self, node_id: _Optional[int] = ..., address: _Optional[str] = ..., hostname: _Optional[str] = ...) -> None: ...
+
+class ReplicateConfiguration(_message.Message):
+    __slots__ = ("clusters", "cross_cluster_topology")
+    CLUSTERS_FIELD_NUMBER: _ClassVar[int]
+    CROSS_CLUSTER_TOPOLOGY_FIELD_NUMBER: _ClassVar[int]
+    clusters: _containers.RepeatedCompositeFieldContainer[MilvusCluster]
+    cross_cluster_topology: _containers.RepeatedCompositeFieldContainer[CrossClusterTopology]
+    def __init__(self, clusters: _Optional[_Iterable[_Union[MilvusCluster, _Mapping]]] = ..., cross_cluster_topology: _Optional[_Iterable[_Union[CrossClusterTopology, _Mapping]]] = ...) -> None: ...
+
+class ConnectionParam(_message.Message):
+    __slots__ = ("uri", "token")
+    URI_FIELD_NUMBER: _ClassVar[int]
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    uri: str
+    token: str
+    def __init__(self, uri: _Optional[str] = ..., token: _Optional[str] = ...) -> None: ...
+
+class MilvusCluster(_message.Message):
+    __slots__ = ("cluster_id", "connection_param", "pchannels")
+    CLUSTER_ID_FIELD_NUMBER: _ClassVar[int]
+    CONNECTION_PARAM_FIELD_NUMBER: _ClassVar[int]
+    PCHANNELS_FIELD_NUMBER: _ClassVar[int]
+    cluster_id: str
+    connection_param: ConnectionParam
+    pchannels: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, cluster_id: _Optional[str] = ..., connection_param: _Optional[_Union[ConnectionParam, _Mapping]] = ..., pchannels: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class CrossClusterTopology(_message.Message):
+    __slots__ = ("source_cluster_id", "target_cluster_id")
+    SOURCE_CLUSTER_ID_FIELD_NUMBER: _ClassVar[int]
+    TARGET_CLUSTER_ID_FIELD_NUMBER: _ClassVar[int]
+    source_cluster_id: str
+    target_cluster_id: str
+    def __init__(self, source_cluster_id: _Optional[str] = ..., target_cluster_id: _Optional[str] = ...) -> None: ...
+
+class MessageID(_message.Message):
+    __slots__ = ("id", "WAL_name")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    WAL_NAME_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    WAL_name: WALName
+    def __init__(self, id: _Optional[str] = ..., WAL_name: _Optional[_Union[WALName, str]] = ...) -> None: ...
+
+class ImmutableMessage(_message.Message):
+    __slots__ = ("id", "payload", "properties")
+    class PropertiesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    ID_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    PROPERTIES_FIELD_NUMBER: _ClassVar[int]
+    id: MessageID
+    payload: bytes
+    properties: _containers.ScalarMap[str, str]
+    def __init__(self, id: _Optional[_Union[MessageID, _Mapping]] = ..., payload: _Optional[bytes] = ..., properties: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ReplicateCheckpoint(_message.Message):
+    __slots__ = ("cluster_id", "pchannel", "message_id", "time_tick")
+    CLUSTER_ID_FIELD_NUMBER: _ClassVar[int]
+    PCHANNEL_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_ID_FIELD_NUMBER: _ClassVar[int]
+    TIME_TICK_FIELD_NUMBER: _ClassVar[int]
+    cluster_id: str
+    pchannel: str
+    message_id: MessageID
+    time_tick: int
+    def __init__(self, cluster_id: _Optional[str] = ..., pchannel: _Optional[str] = ..., message_id: _Optional[_Union[MessageID, _Mapping]] = ..., time_tick: _Optional[int] = ...) -> None: ...
+
+class HighlightData(_message.Message):
+    __slots__ = ("fragments", "scores")
+    FRAGMENTS_FIELD_NUMBER: _ClassVar[int]
+    SCORES_FIELD_NUMBER: _ClassVar[int]
+    fragments: _containers.RepeatedScalarFieldContainer[str]
+    scores: _containers.RepeatedScalarFieldContainer[float]
+    def __init__(self, fragments: _Optional[_Iterable[str]] = ..., scores: _Optional[_Iterable[float]] = ...) -> None: ...
+
+class HighlightResult(_message.Message):
+    __slots__ = ("field_name", "datas")
+    FIELD_NAME_FIELD_NUMBER: _ClassVar[int]
+    DATAS_FIELD_NUMBER: _ClassVar[int]
+    field_name: str
+    datas: _containers.RepeatedCompositeFieldContainer[HighlightData]
+    def __init__(self, field_name: _Optional[str] = ..., datas: _Optional[_Iterable[_Union[HighlightData, _Mapping]]] = ...) -> None: ...
+
+class Highlighter(_message.Message):
+    __slots__ = ("type", "params")
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    PARAMS_FIELD_NUMBER: _ClassVar[int]
+    type: HighlightType
+    params: _containers.RepeatedCompositeFieldContainer[KeyValuePair]
+    def __init__(self, type: _Optional[_Union[HighlightType, str]] = ..., params: _Optional[_Iterable[_Union[KeyValuePair, _Mapping]]] = ...) -> None: ...
+
+class MetricAggSpec(_message.Message):
+    __slots__ = ("op", "field_name")
+    OP_FIELD_NUMBER: _ClassVar[int]
+    FIELD_NAME_FIELD_NUMBER: _ClassVar[int]
+    op: str
+    field_name: str
+    def __init__(self, op: _Optional[str] = ..., field_name: _Optional[str] = ...) -> None: ...
+
+class SortSpec(_message.Message):
+    __slots__ = ("field_name", "direction", "null_first")
+    FIELD_NAME_FIELD_NUMBER: _ClassVar[int]
+    DIRECTION_FIELD_NUMBER: _ClassVar[int]
+    NULL_FIRST_FIELD_NUMBER: _ClassVar[int]
+    field_name: str
+    direction: str
+    null_first: bool
+    def __init__(self, field_name: _Optional[str] = ..., direction: _Optional[str] = ..., null_first: bool = ...) -> None: ...
+
+class TopHitsSpec(_message.Message):
+    __slots__ = ("size", "sort")
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    SORT_FIELD_NUMBER: _ClassVar[int]
+    size: int
+    sort: _containers.RepeatedCompositeFieldContainer[SortSpec]
+    def __init__(self, size: _Optional[int] = ..., sort: _Optional[_Iterable[_Union[SortSpec, _Mapping]]] = ...) -> None: ...
+
+class OrderSpec(_message.Message):
+    __slots__ = ("key", "direction", "null_first")
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    DIRECTION_FIELD_NUMBER: _ClassVar[int]
+    NULL_FIRST_FIELD_NUMBER: _ClassVar[int]
+    key: str
+    direction: str
+    null_first: bool
+    def __init__(self, key: _Optional[str] = ..., direction: _Optional[str] = ..., null_first: bool = ...) -> None: ...
+
+class SearchAggregationSpec(_message.Message):
+    __slots__ = ("fields", "size", "metrics", "order", "top_hits", "sub_aggregation")
+    class MetricsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: MetricAggSpec
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[MetricAggSpec, _Mapping]] = ...) -> None: ...
+    FIELDS_FIELD_NUMBER: _ClassVar[int]
+    SIZE_FIELD_NUMBER: _ClassVar[int]
+    METRICS_FIELD_NUMBER: _ClassVar[int]
+    ORDER_FIELD_NUMBER: _ClassVar[int]
+    TOP_HITS_FIELD_NUMBER: _ClassVar[int]
+    SUB_AGGREGATION_FIELD_NUMBER: _ClassVar[int]
+    fields: _containers.RepeatedScalarFieldContainer[str]
+    size: int
+    metrics: _containers.MessageMap[str, MetricAggSpec]
+    order: _containers.RepeatedCompositeFieldContainer[OrderSpec]
+    top_hits: TopHitsSpec
+    sub_aggregation: SearchAggregationSpec
+    def __init__(self, fields: _Optional[_Iterable[str]] = ..., size: _Optional[int] = ..., metrics: _Optional[_Mapping[str, MetricAggSpec]] = ..., order: _Optional[_Iterable[_Union[OrderSpec, _Mapping]]] = ..., top_hits: _Optional[_Union[TopHitsSpec, _Mapping]] = ..., sub_aggregation: _Optional[_Union[SearchAggregationSpec, _Mapping]] = ...) -> None: ...

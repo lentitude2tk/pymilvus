@@ -12,13 +12,15 @@
 
 from typing import Dict, List, Optional, TypeVar, Union
 
+import orjson
 import pandas as pd
-import ujson
 
 from pymilvus.client import utils
-from pymilvus.client.abstract import BaseRanker, SearchResult
+from pymilvus.client.abstract import BaseRanker
+from pymilvus.client.search_result import SearchResult
 from pymilvus.client.types import Replica
 from pymilvus.exceptions import MilvusException
+from pymilvus.settings import Config
 
 from .mutation import MutationResult
 
@@ -34,6 +36,7 @@ class Partition:
         description: str = "",
         **kwargs,
     ) -> Partition:
+        # ruff: noqa: PLC0415
         from .collection import Collection
 
         if isinstance(collection, Collection):
@@ -51,20 +54,20 @@ class Partition:
             return
 
         if not self._collection.has_partition(self.name, **kwargs):
-            conn = self._get_connection()
-            conn.create_partition(self._collection.name, self.name, **kwargs)
+            conn, context = self._get_connection(**kwargs)
+            conn.create_partition(self._collection.name, self.name, context=context, **kwargs)
 
     def __repr__(self) -> str:
-        return ujson.dumps(
+        return orjson.dumps(
             {
                 "name": self.name,
                 "collection_name": self._collection.name,
                 "description": self.description,
             }
-        )
+        ).decode(Config.EncodeProtocol)
 
-    def _get_connection(self):
-        return self._collection._get_connection()
+    def _get_connection(self, **kwargs):
+        return self._collection._get_connection(**kwargs)
 
     @property
     def description(self) -> str:
@@ -130,9 +133,9 @@ class Partition:
             >>> partition.num_entities
             10
         """
-        conn = self._get_connection()
+        conn, context = self._get_connection()
         stats = conn.get_partition_stats(
-            collection_name=self._collection.name, partition_name=self.name
+            collection_name=self._collection.name, partition_name=self.name, context=context
         )
         result = {stat.key: stat.value for stat in stats}
         result["row_count"] = int(result["row_count"])
@@ -148,8 +151,8 @@ class Partition:
                 for the RPCs.  If timeout is not set, the client keeps waiting until the server
                 responds or an error occurs.
         """
-        conn = self._get_connection()
-        conn.flush([self._collection.name], timeout=timeout, **kwargs)
+        conn, context = self._get_connection(**kwargs)
+        conn.flush([self._collection.name], timeout=timeout, context=context, **kwargs)
 
     def drop(self, timeout: Optional[float] = None, **kwargs):
         """Drop the partition, the same as Collection.drop_partition
@@ -169,14 +172,16 @@ class Partition:
             >>> partition = Partition(collection, "comedy", "comedy films")
             >>> partition.drop()
         """
-        conn = self._get_connection()
-        return conn.drop_partition(self._collection.name, self.name, timeout=timeout, **kwargs)
+        conn, context = self._get_connection(**kwargs)
+        return conn.drop_partition(
+            self._collection.name, self.name, timeout=timeout, context=context, **kwargs
+        )
 
-    def load(self, replica_number: int = 0, timeout: Optional[float] = None, **kwargs):
+    def load(self, replica_number: Optional[int] = None, timeout: Optional[float] = None, **kwargs):
         """Load the partition data into memory.
 
         Args:
-            replica_number (``int``, optional): The replica number to load, defaults to 1.
+            replica_number (``int``, optional): The replica number to load, defaults to None.
             timeout (``float``, optional): an optional duration of time in seconds to allow
                 for the RPCs. If timeout is not set, the client keeps waiting until the
                 server responds or an error occurs.
@@ -196,12 +201,13 @@ class Partition:
             >>> partition = Partition(collection, "comedy", "comedy films")
             >>> partition.load()
         """
-        conn = self._get_connection()
+        conn, context = self._get_connection(**kwargs)
         return conn.load_partitions(
             collection_name=self._collection.name,
             partition_names=[self.name],
             replica_number=replica_number,
             timeout=timeout,
+            context=context,
             **kwargs,
         )
 
@@ -229,11 +235,12 @@ class Partition:
             >>> partition.load()
             >>> partition.release()
         """
-        conn = self._get_connection()
+        conn, context = self._get_connection(**kwargs)
         return conn.release_partitions(
             collection_name=self._collection.name,
             partition_names=[self.name],
             timeout=timeout,
+            context=context,
             **kwargs,
         )
 
@@ -325,11 +332,15 @@ class Partition:
 
         Args:
             data (``list/tuple/pandas.DataFrame/sparse types``): The specified data to upsert
-            partition_name (``str``): The partition name which the data will be upserted at,
-                if partition name is not passed, then the data will be upserted in default partition
             timeout (``float``, optional): A duration of time in seconds to allow for the RPC.
                 If timeout is set to None, the client keeps waiting until the server responds
                 or an error occurs.
+            **kwargs (``dict``): Optional upsert params
+
+                * *partial_update* (``bool``, optional): Whether this is a partial update operation.
+                    If True, only the specified fields will be updated while others remain unchanged
+                    Default is False.
+
         Returns:
             MutationResult: contains 2 properties `upsert_count`, and, `primary_keys`
                 `upsert_count`: how may entites have been upserted at Milvus,
@@ -387,9 +398,6 @@ class Partition:
                 * *offset* (``int``, optional)
                     offset for pagination.
 
-                * *page_retain_order* (``bool``, optional)
-                    Whether to retain the order of the search result when offset is provided.
-
                 * *limit* (``int``, optional)
                     limit for the search results and pagination.
 
@@ -399,7 +407,6 @@ class Partition:
                         "nprobe": 128,
                         "metric_type": "L2",
                         "offset": 10,
-                        "page_retain_order": True,
                         "limit": 10,
                     }
 

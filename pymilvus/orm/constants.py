@@ -10,7 +10,15 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-COMMON_TYPE_PARAMS = ("dim", "max_length", "max_capacity")
+COMMON_TYPE_PARAMS = (
+    "dim",
+    "max_length",
+    "max_capacity",
+    "enable_match",
+    "enable_analyzer",
+    "analyzer_params",
+    "multi_analyzer_params",
+)
 
 CALC_DIST_IDS = "ids"
 CALC_DIST_FLOAT_VEC = "float_vectors"
@@ -18,6 +26,7 @@ CALC_DIST_BIN_VEC = "bin_vectors"
 CALC_DIST_METRIC = "metric"
 CALC_DIST_L2 = "L2"
 CALC_DIST_IP = "IP"
+CALC_DIST_BM25 = "BM25"
 CALC_DIST_HAMMING = "HAMMING"
 CALC_DIST_TANIMOTO = "TANIMOTO"
 CALC_DIST_JACCARD = "JACCARD"
@@ -29,6 +38,7 @@ OFFSET = "offset"
 MILVUS_LIMIT = "limit"
 BATCH_SIZE = "batch_size"
 ID = "id"
+TYPE = "type"
 METRIC_TYPE = "metric_type"
 PARAMS = "params"
 DISTANCE = "distance"
@@ -38,7 +48,11 @@ FIELDS = "fields"
 EF = "ef"
 IS_PRIMARY = "is_primary"
 REDUCE_STOP_FOR_BEST = "reduce_stop_for_best"
+COLLECTION_ID = "collection_id"
 ITERATOR_FIELD = "iterator"
+ITERATOR_SESSION_TS_FIELD = "iterator_session_ts"
+QUERY_ITER_LAST_PK = "query_iter_last_pk"
+QUERY_ITER_LAST_ELEMENT_OFFSET = "query_iter_last_element_offset"
 DEFAULT_MAX_L2_DISTANCE = 99999999.0
 DEFAULT_MIN_IP_DISTANCE = -99999999.0
 DEFAULT_MAX_HAMMING_DISTANCE = 99999999.0
@@ -51,3 +65,7 @@ MAX_BATCH_SIZE: int = 16384
 DEFAULT_SEARCH_EXTENSION_RATE: int = 10
 UNLIMITED: int = -1
 MAX_TRY_TIME: int = 20
+GUARANTEE_TIMESTAMP = "guarantee_timestamp"
+ITERATOR_SESSION_CP_FILE = "iterator_cp_file"
+BM25_k1 = "bm25_k1"
+BM25_b = "bm25_b"

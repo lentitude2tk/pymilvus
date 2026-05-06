@@ -13,17 +13,19 @@
 import json
 import logging
 from threading import Lock
+from typing import Optional
 
 import numpy as np
 
 from pymilvus.client.types import DataType
 from pymilvus.exceptions import MilvusException
-from pymilvus.orm.schema import CollectionSchema, FieldSchema
+from pymilvus.orm.schema import CollectionSchema, FieldSchema, StructFieldSchema
 
 from .buffer import (
     Buffer,
 )
 from .constants import (
+    NUMPY_TYPE_CREATOR,
     TYPE_SIZE,
     TYPE_VALIDATOR,
     BulkFileType,
@@ -39,6 +41,7 @@ class BulkWriter:
         schema: CollectionSchema,
         chunk_size: int,
         file_type: BulkFileType,
+        config: Optional[dict] = None,
         **kwargs,
     ):
         self._schema = schema
@@ -47,6 +50,7 @@ class BulkWriter:
         self._total_row_count = 0
         self._file_type = file_type
         self._buffer_lock = Lock()
+        self._config = config
 
         # the old parameter segment_size is changed to chunk_size, compatible with the legacy code
         self._chunk_size = chunk_size
@@ -82,7 +86,7 @@ class BulkWriter:
     def _new_buffer(self):
         old_buffer = self._buffer
         with self._buffer_lock:
-            self._buffer = Buffer(self._schema, self._file_type)
+            self._buffer = Buffer(self._schema, self._file_type, self._config)
         return old_buffer
 
     def append_row(self, row: dict, **kwargs):
@@ -122,9 +126,16 @@ class BulkWriter:
                 origin_list = validator(x, dim)
                 if dtype == DataType.FLOAT_VECTOR:
                     return origin_list, dim * 4  # for float vector, each dim occupies 4 bytes
+                if dtype in [DataType.FLOAT16_VECTOR, DataType.BFLOAT16_VECTOR]:
+                    return (
+                        origin_list,
+                        dim * 2,
+                    )  # for float16 or bfloat16 vector, each dim occupies 2 bytes
+                if dtype == DataType.INT8_VECTOR:
+                    return origin_list, dim  # for int8 vector, each dim occupies 1 bytes
                 if dtype == DataType.BINARY_VECTOR:
                     return origin_list, dim / 8  # for binary vector, 8 dim occupies 1 byte
-                return origin_list, dim * 2  # for float16 vector, each dim occupies 2 bytes
+                self._throw(f"Illegal vector data type for vector field: '{field.name}'")
             except MilvusException as e:
                 self._throw(f"Illegal vector data for vector field: '{field.name}': {e.message}")
         else:
@@ -158,6 +169,16 @@ class BulkWriter:
 
         return len(x)
 
+    def _verify_scalar(self, x: object, dtype: DataType, field_name: str):
+        validator = TYPE_VALIDATOR[dtype.name]
+        if not validator(x):
+            self._throw(
+                f"Illegal scalar value for field '{field_name}', value overflow or type mismatch"
+            )
+        if isinstance(x, str):
+            return len(x)
+        return TYPE_SIZE[dtype.name]
+
     def _verify_array(self, x: object, field: FieldSchema):
         max_capacity = field.params["max_capacity"]
         element_type = field.element_type
@@ -170,6 +191,8 @@ class BulkWriter:
         row_size = 0
         if element_type.name in TYPE_SIZE:
             row_size = TYPE_SIZE[element_type.name] * len(x)
+            for ele in x:
+                self._verify_scalar(ele, element_type, field.name)
         elif element_type == DataType.VARCHAR:
             for ele in x:
                 row_size = row_size + self._verify_varchar(ele, field)
@@ -178,10 +201,7 @@ class BulkWriter:
 
         return row_size
 
-    def _verify_row(self, row: dict):
-        if not isinstance(row, dict):
-            self._throw("The input row must be a dict object")
-
+    def _verify_normal_field(self, row: dict):
         row_size = 0
         for field in self._schema.fields:
             if field.is_primary and field.auto_id:
@@ -191,17 +211,67 @@ class BulkWriter:
                     )
                 else:
                     continue
-
-            if field.name not in row:
-                self._throw(f"The field '{field.name}' is missed in the row")
+            if field.is_function_output:
+                if field.name in row:
+                    self._throw(f"Field '{field.name}' is function output, no need to provide")
+                else:
+                    continue
 
             dtype = DataType(field.dtype)
+
+            # deal with null (None) according to the Applicable rules in this page:
+            # https://milvus.io/docs/nullable-and-default.md#Nullable--Default
+            if field.nullable:
+                if (
+                    field.default_value is not None
+                    and field.default_value.WhichOneof("data") is not None
+                ):
+                    # 1: nullable is true, default_value is not null, user_input is null
+                    # replace the value by default value
+                    if (field.name not in row) or (row[field.name] is None):
+                        data_type = field.default_value.WhichOneof("data")
+                        row[field.name] = getattr(field.default_value, data_type)
+                        continue
+
+                    # 2: nullable is true, default_value is not null, user_input is not null
+                    # check and set the value
+                # 3: nullable is true, default_value is null, user_input is null
+                # do nothing
+                elif (field.name not in row) or (row[field.name] is None):
+                    row[field.name] = None
+                    continue
+
+                    # 4: nullable is true, default_value is null, user_input is not null
+                    # check and set the value
+            elif (
+                field.default_value is not None
+                and field.default_value.WhichOneof("data") is not None
+            ):
+                # 5: nullable is false, default_value is not null, user_input is null
+                # replace the value by default value
+                if (field.name not in row) or (row[field.name] is None):
+                    data_type = field.default_value.WhichOneof("data")
+                    row[field.name] = getattr(field.default_value, data_type)
+                    continue
+
+                # 6: nullable is false, default_value is not null, user_input is not null
+                # check and set the value
+            # 7: nullable is false, default_value is not null, user_input is null
+            # raise an exception
+            elif (field.name not in row) or (row[field.name] is None):
+                self._throw(f"The field '{field.name}' is not nullable, not allow None value")
+
+                # 8: nullable is false, default_value is null, user_input is not null
+                # check and set the value
+
+            # check and set value, calculate size of this row
             if dtype in {
                 DataType.BINARY_VECTOR,
                 DataType.FLOAT_VECTOR,
                 DataType.FLOAT16_VECTOR,
                 DataType.BFLOAT16_VECTOR,
                 DataType.SPARSE_FLOAT_VECTOR,
+                DataType.INT8_VECTOR,
             }:
                 origin_list, byte_len = self._verify_vector(row[field.name], field)
                 row[field.name] = origin_list
@@ -220,15 +290,74 @@ class BulkWriter:
                 if isinstance(row[field.name], np.generic):
                     row[field.name] = row[field.name].item()
 
-                validator = TYPE_VALIDATOR[dtype.name]
-                if not validator(row[field.name]):
-                    self._throw(
-                        f"Illegal scalar value for field '{field.name}', value overflow or type mismatch"
-                    )
+                row_size = row_size + self._verify_scalar(row[field.name], dtype, field.name)
 
-                row_size = row_size + TYPE_SIZE[dtype.name]
+        return row_size
+
+    def _verify_struct(self, x: object, field: StructFieldSchema):
+        validator = TYPE_VALIDATOR[DataType.STRUCT.name]
+        if not validator(x, field.max_capacity):
+            self._throw(
+                f"Illegal value for struct field '{field.name}', length exceeds capacity or type mismatch"
+            )
+
+        struct_size = 0
+        for sub_field in field.fields:
+            sub_dtype = DataType(sub_field.dtype)
+            for obj in x:
+                if sub_field.name not in obj:
+                    self._throw(
+                        f"Sub field '{sub_field.name}' of struct field '{field.name}' is missed"
+                    )
+                if sub_dtype == DataType.FLOAT_VECTOR:
+                    origin_list, byte_len = self._verify_vector(obj[sub_field.name], sub_field)
+                    obj[sub_field.name] = np.array(
+                        origin_list, dtype=NUMPY_TYPE_CREATOR[DataType.FLOAT.name]
+                    )
+                    struct_size = struct_size + byte_len
+                elif sub_dtype == DataType.VARCHAR:
+                    struct_size = struct_size + self._verify_varchar(obj[sub_field.name], sub_field)
+                elif sub_dtype in {
+                    DataType.BOOL,
+                    DataType.INT8,
+                    DataType.INT16,
+                    DataType.INT32,
+                    DataType.INT64,
+                    DataType.FLOAT,
+                    DataType.DOUBLE,
+                }:
+                    if isinstance(obj[sub_field.name], np.generic):
+                        obj[sub_field.name] = obj[sub_field.name].item()
+
+                    struct_size = struct_size + self._verify_scalar(
+                        obj[sub_field.name], sub_dtype, sub_field.name
+                    )
+                    obj[sub_field.name] = NUMPY_TYPE_CREATOR[sub_dtype.name].type(
+                        obj[sub_field.name]
+                    )
+                else:
+                    self._throw(f"Unsupported field type '{sub_dtype.name}' for struct field")
+
+        return struct_size
+
+    def _verify_struct_field(self, row: dict):
+        structs_size = 0
+        for field in self._schema.struct_fields:
+            if field.name not in row:
+                self._throw(f"The struct field '{field.name}' is missed")
+
+            structs_size = structs_size + self._verify_struct(row[field.name], field)
+
+        return structs_size
+
+    def _verify_row(self, row: dict):
+        if not isinstance(row, dict):
+            self._throw("The input row must be a dict object")
+
+        normal_fields_size = self._verify_normal_field(row)
+        struct_fields_size = self._verify_struct_field(row)
 
         with self._buffer_lock:
-            self._buffer_size = self._buffer_size + row_size
+            self._buffer_size = self._buffer_size + normal_fields_size + struct_fields_size
             self._buffer_row_count = self._buffer_row_count + 1
             self._total_row_count = self._total_row_count + 1

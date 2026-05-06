@@ -10,9 +10,10 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
-from enum import IntEnum
+from enum import Enum, IntEnum
 
 import numpy as np
+import pyarrow as pa
 
 from pymilvus.client.types import (
     DataType,
@@ -22,7 +23,9 @@ from .validators import (
     binary_vector_validator,
     float16_vector_validator,
     float_vector_validator,
+    int8_vector_validator,
     sparse_vector_validator,
+    struct_validator,
 )
 
 MB = 1024 * 1024
@@ -50,13 +53,17 @@ TYPE_VALIDATOR = {
     DataType.FLOAT.name: lambda x: isinstance(x, float),
     DataType.DOUBLE.name: lambda x: isinstance(x, float),
     DataType.VARCHAR.name: lambda x, max_len: isinstance(x, str) and len(x) <= max_len,
-    DataType.JSON.name: lambda x: isinstance(x, dict),
-    DataType.FLOAT_VECTOR.name: lambda x, dim: float_vector_validator(x, dim),
-    DataType.BINARY_VECTOR.name: lambda x, dim: binary_vector_validator(x, dim),
+    DataType.JSON.name: lambda x: isinstance(x, (str, list, dict)),
+    DataType.TIMESTAMPTZ.name: lambda x: isinstance(x, str),
+    DataType.GEOMETRY.name: lambda x: isinstance(x, str),
+    DataType.STRUCT.name: struct_validator,
+    DataType.FLOAT_VECTOR.name: float_vector_validator,
+    DataType.BINARY_VECTOR.name: binary_vector_validator,
     DataType.FLOAT16_VECTOR.name: lambda x, dim: float16_vector_validator(x, dim, False),
     DataType.BFLOAT16_VECTOR.name: lambda x, dim: float16_vector_validator(x, dim, True),
-    DataType.SPARSE_FLOAT_VECTOR.name: lambda x: sparse_vector_validator(x),
-    DataType.ARRAY.name: lambda x, cap: isinstance(x, list) and len(x) <= cap,
+    DataType.SPARSE_FLOAT_VECTOR.name: sparse_vector_validator,
+    DataType.INT8_VECTOR.name: int8_vector_validator,
+    DataType.ARRAY.name: lambda x, cap: (isinstance(x, (list, np.ndarray)) and len(x) <= cap),
 }
 
 NUMPY_TYPE_CREATOR = {
@@ -67,14 +74,40 @@ NUMPY_TYPE_CREATOR = {
     DataType.INT64.name: np.dtype("int64"),
     DataType.FLOAT.name: np.dtype("float32"),
     DataType.DOUBLE.name: np.dtype("float64"),
-    DataType.VARCHAR.name: None,
-    DataType.JSON.name: None,
+    DataType.VARCHAR.name: np.dtype("str"),
+    DataType.JSON.name: np.dtype("str"),  # in numpy/parquet file, json object are stored as string
+    DataType.TIMESTAMPTZ.name: np.dtype("str"),
+    DataType.GEOMETRY.name: np.dtype("str"),
     DataType.FLOAT_VECTOR.name: np.dtype("float32"),
     DataType.BINARY_VECTOR.name: np.dtype("uint8"),
     DataType.FLOAT16_VECTOR.name: np.dtype("uint8"),
     DataType.BFLOAT16_VECTOR.name: np.dtype("uint8"),
-    DataType.SPARSE_FLOAT_VECTOR: None,
+    DataType.SPARSE_FLOAT_VECTOR.name: None,
+    DataType.INT8_VECTOR.name: np.dtype("int8"),
     DataType.ARRAY.name: None,
+    DataType.STRUCT.name: None,
+}
+
+ARROW_TYPE_CREATOR = {
+    DataType.BOOL.name: pa.bool_(),
+    DataType.INT8.name: pa.int8(),
+    DataType.INT16.name: pa.int16(),
+    DataType.INT32.name: pa.int32(),
+    DataType.INT64.name: pa.int64(),
+    DataType.FLOAT.name: pa.float32(),
+    DataType.DOUBLE.name: pa.float64(),
+    DataType.VARCHAR.name: pa.string(),
+    DataType.JSON.name: pa.string(),  # in numpy/parquet file, json objects are stored as string
+    DataType.TIMESTAMPTZ.name: pa.string(),
+    DataType.GEOMETRY.name: pa.string(),
+    DataType.FLOAT_VECTOR.name: pa.list_(pa.float32()),
+    DataType.BINARY_VECTOR.name: pa.list_(pa.uint8()),
+    DataType.FLOAT16_VECTOR.name: pa.list_(pa.uint8()),
+    DataType.BFLOAT16_VECTOR.name: pa.list_(pa.uint8()),
+    DataType.SPARSE_FLOAT_VECTOR.name: pa.string(),  # in numpy/parquet file, sparse vectors are stored as string
+    DataType.INT8_VECTOR.name: pa.list_(pa.int8()),
+    DataType.ARRAY.name: None,
+    DataType.STRUCT.name: None,
 }
 
 
@@ -84,3 +117,10 @@ class BulkFileType(IntEnum):
     JSON = 2
     JSON_RB = 2  # deprecated
     PARQUET = 3
+    CSV = 4
+
+
+class ConnectType(Enum):
+    AUTO = "AUTO"
+    INTERNAL = "INTERNAL"
+    PUBLIC = "PUBLIC"

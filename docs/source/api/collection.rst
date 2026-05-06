@@ -51,6 +51,8 @@ Methods
 +===============================================================+==========================================================================+
 | `drop() <#pymilvus.Collection.drop>`_                         | Drop the collection, as well as its corresponding index files.           |
 +---------------------------------------------------------------+--------------------------------------------------------------------------+
+| `truncate() <#pymilvus.Collection.truncate>`_                 | Truncate the collection, removing all data while preserving the schema.  |
++---------------------------------------------------------------+--------------------------------------------------------------------------+
 | `load() <#pymilvus.Collection.load>`_                         | Load the collection from disk to memory.                                 |
 +---------------------------------------------------------------+--------------------------------------------------------------------------+
 | `release() <#pymilvus.Collection.release>`_                   | Release the collection from memory.                                      |
@@ -61,7 +63,7 @@ Methods
 +---------------------------------------------------------------+--------------------------------------------------------------------------+
 | `search() <#pymilvus.Collection.search>`_                     | Vector similarity search with an optional boolean expression as filters. |
 +---------------------------------------------------------------+--------------------------------------------------------------------------+
-| `upsert() <#pymilvus.Collection.upsert>`_                     | Upsert data of collection.                                                                  |
+| `upsert() <#pymilvus.Collection.upsert>`_                     | Upsert data of collection.                                               |
 +---------------------------------------------------------------+--------------------------------------------------------------------------+
 | `query() <#pymilvus.Collection.query>`_                       | Query with a set of criteria.                                            |
 +---------------------------------------------------------------+--------------------------------------------------------------------------+
@@ -90,5 +92,5 @@ APIs References
    :member-order: bysource
    :special-members: __init__
    :members: schema, description, name, is_empty, num_entities, primary_field, partitions, indexes,
-             drop, load, release, insert, delete, search, query, partition, create_partition, has_partition, drop_partition,
+             drop, truncate, load, release, insert, delete, search, query, partition, create_partition, has_partition, drop_partition,
              index, create_index, has_index, drop_index

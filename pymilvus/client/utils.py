@@ -1,12 +1,16 @@
 import datetime
 import importlib.util
+import struct
+import time
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple, Union
 
-import ujson
+import orjson
+from dateutil.parser import isoparse
 
-from pymilvus.exceptions import MilvusException, ParamError
-from pymilvus.grpc_gen.common_pb2 import Status
+from pymilvus.exceptions import MilvusException, ParamError, SchemaMismatchRetryableException
+from pymilvus.grpc_gen import common_pb2
+from pymilvus.settings import Config
 
 from .constants import LOGICAL_BITS, LOGICAL_BITS_MASK
 from .types import DataType
@@ -14,57 +18,72 @@ from .types import DataType
 MILVUS = "milvus"
 ZILLIZ = "zilliz"
 
-valid_index_types = [
-    "GPU_IVF_FLAT",
-    "GPU_IVF_PQ",
-    "FLAT",
-    "IVF_FLAT",
-    "IVF_SQ8",
-    "IVF_PQ",
-    "HNSW",
-    "BIN_FLAT",
-    "BIN_IVF_FLAT",
-    "DISKANN",
-    "AUTOINDEX",
-    "GPU_CAGRA",
-    "GPU_BRUTE_FORCE",
-]
+valid_index_types = frozenset(
+    {
+        "GPU_IVF_FLAT",
+        "GPU_IVF_PQ",
+        "FLAT",
+        "IVF_FLAT",
+        "IVF_SQ8",
+        "IVF_PQ",
+        "HNSW",
+        "BIN_FLAT",
+        "BIN_IVF_FLAT",
+        "DISKANN",
+        "AUTOINDEX",
+        "GPU_CAGRA",
+        "GPU_BRUTE_FORCE",
+    }
+)
 
-valid_index_params_keys = [
-    "nlist",
-    "m",
-    "nbits",
-    "M",
-    "efConstruction",
-    "PQM",
-    "n_trees",
-    "intermediate_graph_degree",
-    "graph_degree",
-    "build_algo",
-    "cache_dataset_on_device",
-]
+valid_index_params_keys = frozenset(
+    {
+        "nlist",
+        "m",
+        "nbits",
+        "M",
+        "efConstruction",
+        "PQM",
+        "n_trees",
+        "intermediate_graph_degree",
+        "graph_degree",
+        "build_algo",
+        "cache_dataset_on_device",
+    }
+)
 
-valid_binary_index_types = [
-    "BIN_FLAT",
-    "BIN_IVF_FLAT",
-]
+valid_binary_index_types = frozenset(
+    {
+        "BIN_FLAT",
+        "BIN_IVF_FLAT",
+    }
+)
 
-valid_binary_metric_types = [
-    "JACCARD",
-    "HAMMING",
-    "TANIMOTO",
-    "SUBSTRUCTURE",
-    "SUPERSTRUCTURE",
-]
+valid_binary_metric_types = frozenset(
+    {
+        "JACCARD",
+        "HAMMING",
+        "TANIMOTO",
+        "SUBSTRUCTURE",
+        "SUPERSTRUCTURE",
+    }
+)
 
 
-def check_status(status: Status):
+def check_status(status: common_pb2.Status):
     if status.code != 0 or status.error_code != 0:
+        if status.error_code == common_pb2.SchemaMismatch:
+            raise SchemaMismatchRetryableException(status.reason)
         raise MilvusException(status.code, status.reason, status.error_code)
 
 
-def is_successful(status: Status):
+def is_successful(status: common_pb2.Status):
     return status.code == 0 and status.error_code == 0
+
+
+def current_time_ms() -> str:
+    """Get current time in milliseconds as string."""
+    return str(time.time_ns() // 1_000_000)
 
 
 def hybridts_to_unixtime(ts: int):
@@ -74,7 +93,7 @@ def hybridts_to_unixtime(ts: int):
 
 def mkts_from_hybridts(
     hybridts: int,
-    milliseconds: Union[float] = 0.0,
+    milliseconds: float = 0.0,
     delta: Optional[timedelta] = None,
 ) -> int:
     if not isinstance(milliseconds, (int, float)):
@@ -95,8 +114,8 @@ def mkts_from_hybridts(
 
 
 def mkts_from_unixtime(
-    epoch: Union[float],
-    milliseconds: Union[float] = 0.0,
+    epoch: float,
+    milliseconds: float = 0.0,
     delta: Optional[timedelta] = None,
 ) -> int:
     if not isinstance(epoch, (int, float)):
@@ -117,7 +136,7 @@ def mkts_from_unixtime(
 
 def mkts_from_datetime(
     d_time: datetime.datetime,
-    milliseconds: Union[float] = 0.0,
+    milliseconds: float = 0.0,
     delta: Optional[timedelta] = None,
 ) -> int:
     if not isinstance(d_time, datetime.datetime):
@@ -145,64 +164,48 @@ def check_invalid_binary_vector(entities: List) -> bool:
 
 
 def len_of(field_data: Any) -> int:
-    if field_data.HasField("scalars"):
-        if field_data.scalars.HasField("bool_data"):
-            return len(field_data.scalars.bool_data.data)
+    field_kind = field_data.WhichOneof("field")
+    if field_kind == "scalars":
+        scalar_kind = field_data.scalars.WhichOneof("data")
+        if scalar_kind is None:
+            raise MilvusException(message="Unsupported scalar type")
+        scalar_field = getattr(field_data.scalars, scalar_kind)
+        return len(scalar_field.data)
 
-        if field_data.scalars.HasField("int_data"):
-            return len(field_data.scalars.int_data.data)
+    if field_kind == "vectors":
+        if len(field_data.valid_data) > 0:
+            return len(field_data.valid_data)
 
-        if field_data.scalars.HasField("long_data"):
-            return len(field_data.scalars.long_data.data)
-
-        if field_data.scalars.HasField("float_data"):
-            return len(field_data.scalars.float_data.data)
-
-        if field_data.scalars.HasField("double_data"):
-            return len(field_data.scalars.double_data.data)
-
-        if field_data.scalars.HasField("string_data"):
-            return len(field_data.scalars.string_data.data)
-
-        if field_data.scalars.HasField("bytes_data"):
-            return len(field_data.scalars.bytes_data.data)
-
-        if field_data.scalars.HasField("json_data"):
-            return len(field_data.scalars.json_data.data)
-
-        if field_data.scalars.HasField("array_data"):
-            return len(field_data.scalars.array_data.data)
-
-        raise MilvusException(message="Unsupported scalar type")
-
-    if field_data.HasField("vectors"):
         dim = field_data.vectors.dim
-        if field_data.vectors.HasField("float_vector"):
+        vector_kind = field_data.vectors.WhichOneof("data")
+        if vector_kind == "float_vector":
             total_len = len(field_data.vectors.float_vector.data)
             if total_len % dim != 0:
                 raise MilvusException(
                     message=f"Invalid vector length: total_len={total_len}, dim={dim}"
                 )
-            return int(total_len / dim)
-        if field_data.vectors.HasField("bfloat16_vector") or field_data.vectors.HasField(
-            "float16_vector"
-        ):
-            total_len = (
-                len(field_data.vectors.bfloat16_vector)
-                if field_data.vectors.HasField("bfloat16_vector")
-                else len(field_data.vectors.float16_vector)
-            )
+            return total_len // dim
+        if vector_kind in ("bfloat16_vector", "float16_vector"):
+            total_len = len(getattr(field_data.vectors, vector_kind))
             data_wide_in_bytes = 2
             if total_len % (dim * data_wide_in_bytes) != 0:
                 raise MilvusException(
                     message=f"Invalid bfloat16 or float16 vector length: total_len={total_len}, dim={dim}"
                 )
-            return int(total_len / (dim * data_wide_in_bytes))
-        if field_data.vectors.HasField("sparse_float_vector"):
+            return total_len // (dim * data_wide_in_bytes)
+        if vector_kind == "sparse_float_vector":
             return len(field_data.vectors.sparse_float_vector.contents)
+        if vector_kind == "int8_vector":
+            total_len = len(field_data.vectors.int8_vector)
+            return total_len // dim
+        if vector_kind == "vector_array":
+            return len(field_data.vectors.vector_array.data)
 
         total_len = len(field_data.vectors.binary_vector)
         return int(total_len / (dim / 8))
+
+    if field_kind == "struct_arrays":
+        return len_of(field_data.struct_arrays.fields[0])
 
     raise MilvusException(message="Unknown data type")
 
@@ -272,12 +275,34 @@ def traverse_upsert_info(fields_info: Any):
     return location, primary_key_loc
 
 
+def get_params(search_params: Dict):
+    # after 2.5.2, all parameters of search_params can be written into one layer
+    # no more parameters will be written searchParams.params
+    # to ensure compatibility and milvus can still get a json format parameter
+    # try to write all the parameters under searchParams into searchParams.Params
+    params = dict(search_params.get("params", {}))
+    for key, value in search_params.items():
+        if key in params:
+            if params[key] != value:
+                raise ParamError(
+                    message=f"ambiguous parameter: {key}, in search_param: {value}, in search_param.params: {params[key]}"
+                )
+        elif key != "params":
+            params[key] = value
+
+    return params
+
+
 def get_server_type(host: str):
     return ZILLIZ if (isinstance(host, str) and "zilliz" in host.lower()) else MILVUS
 
 
 def dumps(v: Union[dict, str]) -> str:
-    return ujson.dumps(v) if isinstance(v, dict) else str(v)
+    # Use JSON serialization for dicts to ensure proper formatting
+    # For other types (strings, numbers, booleans), use str() to maintain compatibility
+    if isinstance(v, dict):
+        return orjson.dumps(v).decode(Config.EncodeProtocol)
+    return str(v)
 
 
 class SciPyHelper:
@@ -314,6 +339,8 @@ class SciPyHelper:
         cls._init()
         if not cls._matrix_available:
             return False
+
+        # ruff: noqa: PLC0415
         from scipy.sparse import isspmatrix
 
         return isspmatrix(data)
@@ -323,6 +350,8 @@ class SciPyHelper:
         cls._init()
         if not cls._array_available:
             return False
+
+        # ruff: noqa: PLC0415
         from scipy.sparse import issparse, isspmatrix
 
         return issparse(data) and not isspmatrix(data)
@@ -375,3 +404,124 @@ SparseMatrixInputType = Union[
     "csr_array",
     "spmatrix",
 ]
+
+
+def is_sparse_vector_type(data_type: DataType) -> bool:
+    return data_type == data_type.SPARSE_FLOAT_VECTOR
+
+
+dense_float_vector_type_set = {
+    DataType.FLOAT_VECTOR,
+    DataType.FLOAT16_VECTOR,
+    DataType.BFLOAT16_VECTOR,
+}
+dense_vector_type_set = {
+    DataType.FLOAT_VECTOR,
+    DataType.FLOAT16_VECTOR,
+    DataType.BFLOAT16_VECTOR,
+    DataType.INT8_VECTOR,
+}
+
+
+def is_dense_float_vector_type(data_type: DataType) -> bool:
+    return data_type in dense_float_vector_type_set
+
+
+def is_float_vector_type(data_type: DataType):
+    return is_sparse_vector_type(data_type) or is_dense_float_vector_type(data_type)
+
+
+def is_binary_vector_type(data_type: DataType):
+    return data_type == DataType.BINARY_VECTOR
+
+
+def is_int_vector_type(data_type: DataType):
+    return data_type == DataType.INT8_VECTOR
+
+
+def is_vector_type(data_type: DataType):
+    return (
+        is_float_vector_type(data_type)
+        or is_binary_vector_type(data_type)
+        or is_int_vector_type(data_type)
+    )
+
+
+# parses plain bytes to a sparse float vector(SparseRowOutputType)
+def sparse_parse_single_row(data: bytes) -> SparseRowOutputType:
+    if len(data) % 8 != 0:
+        raise ParamError(message=f"The length of data must be a multiple of 8, got {len(data)}")
+
+    return {
+        struct.unpack("I", data[i : i + 4])[0]: struct.unpack("f", data[i + 4 : i + 8])[0]
+        for i in range(0, len(data), 8)
+    }
+
+
+def convert_struct_fields_to_user_format(struct_array_fields: List[Dict]) -> List[Dict]:
+    """
+    Convert internal struct_array_fields representation to user-friendly format.
+
+    :param struct_array_fields: List of struct field info from server
+    :return: List of user-friendly field dictionaries
+    """
+    converted_fields = []
+
+    for struct_field_info in struct_array_fields:
+        # Convert to user perspective: a field of type ARRAY with element_type STRUCT
+        user_struct_field = {
+            "field_id": struct_field_info.get("field_id"),
+            "name": struct_field_info["name"],
+            "description": struct_field_info.get("description", ""),
+            "type": DataType.ARRAY,
+            "element_type": DataType.STRUCT,
+            "params": {},
+        }
+
+        # Extract max_capacity from first field (all fields should have the same value)
+        max_capacity = None
+        for f in struct_field_info.get("fields", []):
+            params = f.get("params", {})
+            if isinstance(params, dict) and params.get("max_capacity"):
+                max_capacity = params["max_capacity"]
+                break
+
+        if max_capacity:
+            user_struct_field["params"]["max_capacity"] = max_capacity
+
+        # Convert struct sub-fields to user-defined types
+        struct_fields = []
+        for f in struct_field_info.get("fields", []):
+            # Struct fields are always ARRAY or ARRAY_OF_VECTOR, so element_type must exist
+            # Handle both cases: element_type as dict key or already converted DataType
+            user_field_type = f.get("element_type")
+
+            if user_field_type:
+                struct_sub_field = {
+                    "field_id": f.get("field_id"),
+                    "name": f["name"],
+                    "type": user_field_type,
+                    "description": f.get("description", ""),
+                }
+
+                params = f.get("params", {})
+                if params and isinstance(params, dict):
+                    cleaned_params = {k: v for k, v in params.items() if k != "max_capacity"}
+                    if cleaned_params:
+                        struct_sub_field["params"] = cleaned_params
+
+                struct_fields.append(struct_sub_field)
+
+        user_struct_field["struct_fields"] = struct_fields
+        converted_fields.append(user_struct_field)
+
+    return converted_fields
+
+
+def validate_iso_timestamp(s: str) -> bool:
+    try:
+        isoparse(s)
+    except (ValueError, TypeError):
+        return False
+    else:
+        return True

@@ -30,8 +30,9 @@ from .constants import (
 )
 from .local_bulk_writer import LocalBulkWriter
 
-logger = logging.getLogger("remote_bulk_writer")
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+TEMP_LOCAL_PATH = "local_path"
 
 
 class RemoteBulkWriter(LocalBulkWriter):
@@ -43,6 +44,7 @@ class RemoteBulkWriter(LocalBulkWriter):
             access_key: Optional[str] = None,
             secret_key: Optional[str] = None,
             secure: bool = False,
+            enable_virtual_style_endpoint: bool = False,
             session_token: Optional[str] = None,
             region: Optional[str] = None,
             http_client: Any = None,
@@ -53,6 +55,7 @@ class RemoteBulkWriter(LocalBulkWriter):
             self._access_key = access_key
             self._secret_key = secret_key
             self._secure = (secure,)
+            self._enable_virtual_style_endpoint = (enable_virtual_style_endpoint,)
             self._session_token = (session_token,)
             self._region = (region,)
             self._http_client = (http_client,)  # urllib3.poolmanager.PoolManager
@@ -110,10 +113,15 @@ class RemoteBulkWriter(LocalBulkWriter):
         connect_param: Optional[Union[S3ConnectParam, AzureConnectParam]],
         chunk_size: int = 1024 * MB,
         file_type: BulkFileType = BulkFileType.PARQUET,
+        config: Optional[dict] = None,
         **kwargs,
     ):
-        local_path = Path(sys.argv[0]).resolve().parent.joinpath("bulk_writer")
-        super().__init__(schema, str(local_path), chunk_size, file_type, **kwargs)
+        temp_local_path = str(Path(sys.argv[0]).resolve().parent.joinpath("bulk_writer"))
+        if TEMP_LOCAL_PATH in kwargs:
+            temp_local_path = kwargs.get(TEMP_LOCAL_PATH)
+            kwargs.pop(TEMP_LOCAL_PATH)
+        super().__init__(schema, temp_local_path, chunk_size, file_type, config, **kwargs)
+
         self._remote_path = Path("/").joinpath(remote_path).joinpath(super().uuid)
         self._connect_param = connect_param
         self._client = None
@@ -153,6 +161,10 @@ class RemoteBulkWriter(LocalBulkWriter):
                     http_client=arg_parse(self._connect_param._http_client),
                     credentials=arg_parse(self._connect_param._credentials),
                 )
+
+                if arg_parse(self._connect_param._enable_virtual_style_endpoint):
+                    self._client.enable_virtual_style_endpoint()
+
                 logger.info("Minio/S3 blob storage client successfully initialized")
             except Exception as err:
                 logger.error(f"Failed to connect MinIO/S3, error: {err}")
@@ -218,7 +230,7 @@ class RemoteBulkWriter(LocalBulkWriter):
 
     def _bucket_exists(self) -> bool:
         if isinstance(self._client, Minio):
-            return self._client.bucket_exists(self._connect_param._bucket_name)
+            return self._client.bucket_exists(bucket_name=self._connect_param._bucket_name)
         if isinstance(self._client, BlobServiceClient):
             containers = self._client.list_containers()
             for container in containers:
@@ -240,7 +252,7 @@ class RemoteBulkWriter(LocalBulkWriter):
         elif isinstance(self._client, BlobServiceClient):
             logger.info(f"Target bucket: '{self._connect_param._container_name}'")
             container_client = self._client.get_container_client(
-                self._connect_param._container_name
+                container=self._connect_param._container_name
             )
             with Path(file_path).open("rb") as data:
                 container_client.upload_blob(
@@ -279,7 +291,7 @@ class RemoteBulkWriter(LocalBulkWriter):
 
             for file_path in file_list:
                 ext = Path(file_path).suffix
-                if ext not in [".json", ".npy", ".parquet"]:
+                if ext not in [".json", ".npy", ".parquet", ".csv"]:
                     continue
 
                 relative_file_path = str(file_path).replace(str(super().data_path), "")

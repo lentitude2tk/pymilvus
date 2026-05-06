@@ -12,25 +12,27 @@
 
 import json
 import logging
-from urllib.parse import urlparse
+from typing import List, Optional, Union
 
 import requests
 
 from pymilvus.exceptions import MilvusException
 
-logger = logging.getLogger("bulk_import")
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
-def _http_headers(api_key: str):
-    return {
+def _http_headers(api_key: str, db_name: str = ""):
+    headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_0) AppleWebKit/535.11 (KHTML, like Gecko) "
         "Chrome/17.0.963.56 Safari/535.11",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept": "application/json",
         "Accept-Encodin": "gzip,deflate,sdch",
         "Accept-Languag": "en-US,en;q=0.5",
         "Authorization": f"Bearer {api_key}",
     }
+    if db_name:
+        headers["DB-Name"] = db_name
+    return headers
 
 
 def _throw(msg: str):
@@ -40,17 +42,45 @@ def _throw(msg: str):
 
 def _handle_response(url: str, res: json):
     inner_code = res["code"]
-    if inner_code != 200:
+    if inner_code != 0:
         inner_message = res["message"]
         _throw(f"Failed to request url: {url}, code: {inner_code}, message: {inner_message}")
 
 
 def _post_request(
-    url: str, api_key: str, params: {}, timeout: int = 20, **kwargs
+    url: str,
+    api_key: str,
+    params: {},
+    timeout: int = 20,
+    verify: Optional[Union[bool, str]] = True,
+    cert: Optional[Union[str, tuple]] = None,
+    **kwargs,
 ) -> requests.Response:
+    """Send a POST request with 1-way / 2-way optional certificate validation
+
+    Args:
+        url (str): The endpoint URL
+        api_key (str): API key for authentication
+        params (dict): JSON parameters for the request
+        timeout (int): Timeout for the request
+        verify (bool, str, optional): Either a boolean, to verify the server's TLS certificate
+             or a string, which must be server's certificate path. Defaults to `True`.
+        cert (str, tuple, optional): if String, path to ssl client cert file.
+                                     if Tuple, ('cert', 'key') pair.
+
+    Returns:
+        requests.Response: Response object.
+    """
+    db_name = kwargs.pop("db_name", "")
     try:
         resp = requests.post(
-            url=url, headers=_http_headers(api_key), json=params, timeout=timeout, **kwargs
+            url=url,
+            headers=_http_headers(api_key, db_name),
+            json=params,
+            timeout=timeout,
+            verify=verify,
+            cert=cert,
+            **kwargs,
         )
         if resp.status_code != 200:
             _throw(f"Failed to post url: {url}, status code: {resp.status_code}")
@@ -78,48 +108,168 @@ def _get_request(
 ## bulkinsert RESTful api wrapper
 def bulk_import(
     url: str,
-    api_key: str,
-    object_url: str,
-    access_key: str,
-    secret_key: str,
-    cluster_id: str,
     collection_name: str,
+    db_name: str = "",
+    files: Optional[List[List[str]]] = None,
+    object_url: str = "",
+    object_urls: Optional[List[List[str]]] = None,
+    cluster_id: str = "",
+    project_id: str = "",
+    region_id: str = "",
+    api_key: str = "",
+    access_key: str = "",
+    secret_key: str = "",
+    token: str = "",
+    volume_name: str = "",
+    data_paths: [List[List[str]]] = None,
+    verify: Optional[Union[bool, str]] = True,
+    cert: Optional[Union[str, tuple]] = None,
     **kwargs,
 ) -> requests.Response:
     """call bulkinsert restful interface to import files
 
     Args:
         url (str): url of the server
-        object_url (str): data files url
-        access_key (str): access key to access the object storage
-        secret_key (str): secret key to access the object storage
-        cluster_id (str): id of a milvus instance(for cloud)
         collection_name (str): name of the target collection
+        db_name (str): name of target database
+        partition_name (str): name of the target partition
+        files (list of list of str): The files that contain the data to import.
+             A sub-list contains a single JSON or Parquet file, or a set of Numpy files.
+        api_key (str): API key to authenticate your requests
+
+        cluster_id (str): id of a milvus instance(cloud)
+        project_id (str): id of a project(cloud, for project database)
+        region_id (str): id of a region(cloud, for project database)
+        object_url (str): The object URL of the object to import(cloud), use `object_urls` instead.
+        object_urls (list of list of str): The object urls that contain the data to import.
+             A sub-list contains a single object url
+        access_key (str): access key to access the object storage(cloud)
+        secret_key (str): secret key to access the object storage(cloud)
+        token (str): access token to access the object storage(cloud)
+
+        volume_name (str): name of the volume to import(cloud)
+        data_paths (list of list of str): The paths of files that contain the data to import(cloud)
+        verify (bool, str, optional): Either a boolean, to verify the server's TLS certificate
+             or a string, which must be server's certificate path. Defaults to `True`.
+        cert (str, tuple, optional): if String, path to ssl client cert file.
+                                     if Tuple, ('cert', 'key') pair.
 
     Returns:
-        json: response of the restful interface
-    """
-    up = urlparse(url)
-    if up.scheme.startswith("http"):
-        request_url = f"{url}/v1/vector/collections/import"
-    else:
-        request_url = f"https://{url}/v1/vector/collections/import"
+        response of the restful interface
 
+    Examples:
+        >>> # 1. Import multiple files into an open-source Milvus instance
+        >>> bulk_import(
+        ...    url="http://127.0.0.1:19530",
+        ...    api_key="username:password",
+        ...    db_name="",
+        ...    collection_name="my_collection",
+        ...    partition_name="", # If Collection not enable partitionKey, can be specified.
+        ...    files=[
+        ...        ["parquet-folder/1.parquet"],
+        ...        ["parquet-folder-2/1.parquet"]
+        ...    ]
+        ... )
+
+        >>> # 2. Import multiple files or folders from object storage into a Zilliz Cloud instance
+        >>> bulk_import(
+        ...    url="https://api.cloud.zilliz.com", # If regions in China, it is: https://api.cloud.zilliz.com.cn
+        ...    api_key="YOUR_API_KEY",
+        ...    cluster_id="in0x-xxx",
+        ...    db_name="", # Only For Dedicated deployments: this parameter can be specified.
+        ...    collection_name="my_collection",
+        ...    partition_name="", # If Collection not enable partitionKey, can be specified.
+        ...    object_urls=[
+        ...        ["s3://bucket-name/parquet-folder-1/1.parquet"],
+        ...        ["s3://bucket-name/parquet-folder-2/1.parquet"],
+        ...        ["s3://bucket-name/parquet-folder-3/"]
+        ...    ],
+        ...    access_key="your-access-key",
+        ...    secret_key="your-secret-key",
+        ...    token="your-token" # for short-term credentials, also include `token`
+        ... )
+
+        >>> # 3. Import multiple files or folders from a Zilliz Volume into a Zilliz Cloud instance
+        >>> bulk_import(
+        ...     url="https://api.cloud.zilliz.com", # If regions in China, it is: https://api.cloud.zilliz.com.cn
+        ...     api_key="YOUR_API_KEY",
+        ...     cluster_id="in0x-xxx",
+        ...     db_name="", # Only For Dedicated deployments: this parameter can be specified.
+        ...     collection_name="my_collection",
+        ...     partition_name="", # If Collection not enable partitionKey, can be specified.
+        ...     volume_name="my_volume",
+        ...     data_paths=[
+        ...         ["parquet-folder/1.parquet"],
+        ...         ["parquet-folder-2/"]
+        ...     ]
+        ... )
+
+        >>> # 4. Import multiple files or folders into a Zilliz Cloud project database
+        >>> bulk_import(
+        ...     url="https://api.cloud.zilliz.com", # If regions in China, it is: https://api.cloud.zilliz.com.cn
+        ...     api_key="YOUR_API_KEY",
+        ...     project_id="proj-xxx",
+        ...     region_id="aws-us-west-2",
+        ...     collection_name="my_collection",
+        ...     partition_name="", # If Collection not enable partitionKey, can be specified.
+        ...     object_urls=[
+        ...         ["s3://bucket-name/parquet-folder-1/1.parquet"],
+        ...         ["s3://bucket-name/parquet-folder-2/1.parquet"],
+        ...         ["s3://bucket-name/parquet-folder-3/"]
+        ...     ],
+        ...     access_key="your-access-key",
+        ...     secret_key="your-secret-key",
+        ...     token="your-token" # for short-term credentials, also include `token`
+        ... )
+    """
+    request_url = url + "/v2/vectordb/jobs/import/create"
+
+    partition_name = kwargs.pop("partition_name", "")
     params = {
+        "collectionName": collection_name,
+        "dbName": db_name,
+        "partitionName": partition_name,
+        "files": files,
         "objectUrl": object_url,
+        "objectUrls": object_urls,
+        "clusterId": cluster_id,
+        "projectId": project_id,
+        "regionId": region_id,
         "accessKey": access_key,
         "secretKey": secret_key,
-        "clusterId": cluster_id,
-        "collectionName": collection_name,
+        "token": token,
+        "volumeName": volume_name,
+        "dataPaths": data_paths,
     }
 
-    resp = _post_request(url=request_url, api_key=api_key, params=params, **kwargs)
-    _handle_response(url, resp.json())
+    options = kwargs.pop("options", {})
+    if isinstance(options, dict):
+        params["options"] = options
+
+    resp = _post_request(
+        url=request_url,
+        api_key=api_key,
+        params=params,
+        verify=verify,
+        cert=cert,
+        db_name=db_name,
+        **kwargs,
+    )
+    _handle_response(request_url, resp.json())
     return resp
 
 
 def get_import_progress(
-    url: str, api_key: str, job_id: str, cluster_id: str, **kwargs
+    url: str,
+    job_id: str,
+    cluster_id: str = "",
+    project_id: str = "",
+    region_id: str = "",
+    api_key: str = "",
+    db_name: str = "",
+    verify: Optional[Union[bool, str]] = True,
+    cert: Optional[Union[str, tuple]] = None,
+    **kwargs,
 ) -> requests.Response:
     """get job progress
 
@@ -127,52 +277,93 @@ def get_import_progress(
         url (str): url of the server
         job_id (str): a job id
         cluster_id (str): id of a milvus instance(for cloud)
+        project_id (str): id of a project(cloud, for project database)
+        region_id (str): id of a region(cloud, for project database)
+        api_key (str): API key to authenticate your requests.
+        db_name (str): database name, sent via DB-Name header for RBAC
+        verify (bool, str, optional): Either a boolean, to verify the server's TLS certificate
+             or a string, which must be server's certificate path. Defaults to `True`.
+        cert (str, tuple, optional): if String, path to ssl client cert file.
+                                     if Tuple, ('cert', 'key') pair.
 
     Returns:
-        json: response of the restful interface
+        response of the restful interface
     """
-    up = urlparse(url)
-    if up.scheme.startswith("http"):
-        request_url = f"{url}/v1/vector/collections/import/get"
-    else:
-        request_url = f"https://{url}/v1/vector/collections/import/get"
+    request_url = url + "/v2/vectordb/jobs/import/describe"
 
     params = {
         "jobId": job_id,
         "clusterId": cluster_id,
+        "projectId": project_id,
+        "regionId": region_id,
     }
 
-    resp = _get_request(url=request_url, api_key=api_key, params=params, **kwargs)
-    _handle_response(url, resp.json())
+    resp = _post_request(
+        url=request_url,
+        api_key=api_key,
+        params=params,
+        verify=verify,
+        cert=cert,
+        db_name=db_name,
+        **kwargs,
+    )
+    _handle_response(request_url, resp.json())
     return resp
 
 
 def list_import_jobs(
-    url: str, api_key: str, cluster_id: str, page_size: int, current_page: int, **kwargs
+    url: str,
+    collection_name: str = "",
+    db_name: str = "",
+    cluster_id: str = "",
+    project_id: str = "",
+    region_id: str = "",
+    api_key: str = "",
+    page_size: int = 10,
+    current_page: int = 1,
+    verify: Optional[Union[bool, str]] = True,
+    cert: Optional[Union[str, tuple]] = None,
+    **kwargs,
 ) -> requests.Response:
     """list jobs in a cluster
 
     Args:
         url (str): url of the server
+        collection_name (str): name of the target collection
         cluster_id (str): id of a milvus instance(for cloud)
+        project_id (str): id of a project(cloud, for project database)
+        region_id (str): id of a region(cloud, for project database)
+        api_key (str): API key to authenticate your requests.
         page_size (int): pagination size
         current_page (int): pagination
+        verify (bool, str, optional): Either a boolean, to verify the server's TLS certificate
+             or a string, which must be server's certificate path. Defaults to `True`.
+        cert (str, tuple, optional): if String, path to ssl client cert file.
+                                     if Tuple, ('cert', 'key') pair.
 
     Returns:
-        json: response of the restful interface
+        response of the restful interface
     """
-    up = urlparse(url)
-    if up.scheme.startswith("http"):
-        request_url = f"{url}/v1/vector/collections/import/list"
-    else:
-        request_url = f"https://{url}/v1/vector/collections/import/list"
+    request_url = url + "/v2/vectordb/jobs/import/list"
 
     params = {
+        "collectionName": collection_name,
+        "dbName": db_name,
         "clusterId": cluster_id,
+        "projectId": project_id,
+        "regionId": region_id,
         "pageSize": page_size,
         "currentPage": current_page,
     }
 
-    resp = _get_request(url=request_url, api_key=api_key, params=params, **kwargs)
-    _handle_response(url, resp.json())
+    resp = _post_request(
+        url=request_url,
+        api_key=api_key,
+        params=params,
+        verify=verify,
+        cert=cert,
+        db_name=db_name,
+        **kwargs,
+    )
+    _handle_response(request_url, resp.json())
     return resp

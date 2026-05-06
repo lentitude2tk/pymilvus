@@ -1,89 +1,105 @@
-from pymilvus import utility, connections
+from pymilvus import (
+    MilvusClient,
+    DataType,
+)
 from pymilvus.client.constants import DEFAULT_RESOURCE_GROUP
-from example import *
 
-_HOST = '127.0.0.1'
-_PORT = '19530'
+from pymilvus.client.types import (
+    ResourceGroupConfig,
+)
 
-_CONNECTION_NAME = "default"
-
-_COLLECTION_NAME = 'rg_demo'
-_ID_FIELD_NAME = 'id_field'
-_VECTOR_FIELD_NAME = 'float_vector_field'
-
-# Vector parameters
-_DIM = 128
-
-# Create a Milvus connection
-
-def create_connection(user, passwd):
-    print(f"\nCreate connection...")
-    connections.connect(alias=_CONNECTION_NAME,host=_HOST, port=_PORT, user=user, password=passwd)
-    print(f"\nList connections:")
-    print(connections.list_connections())
+fmt = "\n=== {:30} ===\n"
+dim = 8
+collection_name = "hello_milvus"
+milvus_client = MilvusClient("http://localhost:19530")
 
 
-def create_resource_group(name):
-    print(f"create resource group: {name}")
-    utility.create_resource_group(name, using=_CONNECTION_NAME)
+## create collection and load collection
+print("create collection and load collection")
+collection_name = "hello_milvus"
+has_collection = milvus_client.has_collection(collection_name, timeout=5)
+if has_collection:
+    milvus_client.drop_collection(collection_name)
+
+schema = milvus_client.create_schema(enable_dynamic_field=True)
+schema.add_field("id", DataType.INT64, is_primary=True)
+schema.add_field("embeddings", DataType.FLOAT_VECTOR, dim=dim)
+schema.add_field("title", DataType.VARCHAR, max_length=64)
+milvus_client.create_collection(collection_name, schema=schema, consistency_level="Strong")
+index_params = milvus_client.prepare_index_params()
+index_params.add_index(field_name = "embeddings", metric_type="L2")
+index_params.add_index(field_name = "title", index_type = "Trie", index_name="my_trie")
+milvus_client.create_index(collection_name, index_params)
+milvus_client.load_collection(collection_name)
 
 
-def drop_resource_group(name):
-    print(f"drop resource group: {name}")
-    utility.drop_resource_group(name, using=_CONNECTION_NAME)
+## create resource group
+print("create resource group")
+milvus_client.create_resource_group("rg1")
+milvus_client.create_resource_group("rg2")
+
+## update resource group
+configs = {
+            "rg1": ResourceGroupConfig(
+                requests={"node_num": 1},
+                limits={"node_num": 5},
+                transfer_from=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+                transfer_to=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+            ),
+            "rg2": ResourceGroupConfig(
+                requests={"node_num": 4},
+                limits={"node_num": 4},
+                transfer_from=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+                transfer_to=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+            ),
+        }
+milvus_client.update_resource_groups(configs)
+
+## describe resource group
+print("describe rg1")
+result = milvus_client.describe_resource_group("rg1")
+print(result)
+
+print("describe rg2")
+result = milvus_client.describe_resource_group("rg2")
+print(result)
+
+## list resource group
+print("list resource group")
+result = milvus_client.list_resource_groups()
+print(result)
+
+## transfer replica
+print("transfer replica to rg1")
+milvus_client.transfer_replica(DEFAULT_RESOURCE_GROUP, "rg1", collection_name, 1)
+print("describe rg1 after transfer replica in")
+result = milvus_client.describe_resource_group("rg1")
+print(result)
+
+milvus_client.transfer_replica("rg1", DEFAULT_RESOURCE_GROUP, collection_name, 1)
+print("describe rg1 after transfer replica out")
+result = milvus_client.describe_resource_group("rg1")
+print(result)
+
+## drop resource group
+print("drop resource group")
+# create resource group
+configs = {
+            "rg1": ResourceGroupConfig(
+                requests={"node_num": 0},
+                limits={"node_num": 0},
+                transfer_from=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+                transfer_to=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+            ),
+            "rg2": ResourceGroupConfig(
+                requests={"node_num": 0},
+                limits={"node_num": 0},
+                transfer_from=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+                transfer_to=[{"resource_group": DEFAULT_RESOURCE_GROUP}],
+            ),
+        }
+milvus_client.update_resource_groups(configs)
+milvus_client.drop_resource_group("rg1")
+milvus_client.drop_resource_group("rg2")
 
 
-def describe_resource_group(name):
-    info = utility.describe_resource_group(name, using=_CONNECTION_NAME)
-    print(f"describe resource group: {info}")
-
-
-def list_resource_groups():
-    rgs = utility.list_resource_groups(using=_CONNECTION_NAME)
-    print(f"list resource group: {rgs}")
-
-
-def transfer_node(source, target, num_node):
-    print(f"transfer {num_node} nodes from {source} to {target}")
-    utility.transfer_node(source, target, num_node, using=_CONNECTION_NAME)
-
-
-def transfer_replica(source, target, collection_name, num_replica):
-    print(
-        f"transfer {num_replica} replicas in {collection_name} from {source} to {target}")
-    utility.transfer_replica(
-        source, target, collection_name, num_replica, using=_CONNECTION_NAME)
-
-def run(): 
-    create_connection("root", "123456")
-    coll = create_collection(_COLLECTION_NAME, _ID_FIELD_NAME, _VECTOR_FIELD_NAME)
-    vectors = insert(coll, 10000, _DIM)
-    coll.flush()
-    create_index(coll, _VECTOR_FIELD_NAME)
-    
-    create_resource_group("rg")
-    list_resource_groups()
-    describe_resource_group("rg")
-    transfer_node(DEFAULT_RESOURCE_GROUP, "rg", 1)
-    describe_resource_group(DEFAULT_RESOURCE_GROUP)
-    describe_resource_group("rg")
-    release_collection(coll)
-    coll.load(_resource_groups=["rg"])
-    print("load finish") 
-
-    transfer_node("rg", DEFAULT_RESOURCE_GROUP, 1)
-    describe_resource_group(DEFAULT_RESOURCE_GROUP)
-    describe_resource_group("rg")
-    
-    describe_resource_group(DEFAULT_RESOURCE_GROUP)
-    describe_resource_group("rg")
-    transfer_replica("rg", DEFAULT_RESOURCE_GROUP, _COLLECTION_NAME, 1)
-    describe_resource_group(DEFAULT_RESOURCE_GROUP)
-    describe_resource_group("rg")
-   
-    drop_resource_group("rg")
-    release_collection(coll)
-    drop_collection(_COLLECTION_NAME)
-
-if __name__ == "__main__":
-    run()

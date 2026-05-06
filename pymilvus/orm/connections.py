@@ -14,12 +14,13 @@ import copy
 import logging
 import pathlib
 import threading
-import time
 from typing import Callable, Tuple, Union
 from urllib import parse
 
+from pymilvus.client.async_grpc_handler import AsyncGrpcHandler
+from pymilvus.client.call_context import CallContext
 from pymilvus.client.check import is_legal_address, is_legal_host, is_legal_port
-from pymilvus.client.grpc_handler import GrpcHandler
+from pymilvus.client.grpc_handler import GrpcHandler, ReconnectHandler
 from pymilvus.exceptions import (
     ConnectionConfigException,
     ConnectionNotExistException,
@@ -63,53 +64,6 @@ class SingleInstanceMetaClass(type):
         return super().__new__(cls, *args, **kwargs)
 
 
-class ReconnectHandler:
-    def __init__(self, conns: object, connection_name: str, kwargs: object) -> None:
-        self.connection_name = connection_name
-        self.conns = conns
-        self._kwargs = kwargs
-        self.is_idle_state = False
-        self.reconnect_lock = threading.Lock()
-
-    def check_state_and_reconnect_later(self):
-        check_after_seconds = 3
-        logger.debug(f"state is idle, schedule reconnect in {check_after_seconds} seconds")
-        time.sleep(check_after_seconds)
-        if not self.is_idle_state:
-            logger.debug("idle state changed, skip reconnect")
-            return
-        with self.reconnect_lock:
-            logger.info("reconnect on idle state")
-            self.is_idle_state = False
-            try:
-                logger.debug("try disconnecting old connection...")
-                self.conns.disconnect(self.connection_name)
-            except Exception:
-                logger.warning("disconnect failed: {e}")
-            finally:
-                reconnected = False
-                while not reconnected:
-                    try:
-                        logger.debug("try reconnecting...")
-                        self.conns.connect(self.connection_name, **self._kwargs)
-                        reconnected = True
-                    except Exception as e:
-                        logger.warning(
-                            f"reconnect failed: {e}, try again after {check_after_seconds} seconds"
-                        )
-                        time.sleep(check_after_seconds)
-            logger.info("reconnected")
-
-    def reconnect_on_idle(self, state: object):
-        logger.debug(f"state change to: {state}")
-        with self.reconnect_lock:
-            if state.value[1] != "idle":
-                self.is_idle_state = False
-                return
-            self.is_idle_state = True
-            threading.Thread(target=self.check_state_and_reconnect_later).start()
-
-
 class Connections(metaclass=SingleInstanceMetaClass):
     """Class for managing all connections of milvus.  Used as a singleton in this module."""
 
@@ -133,8 +87,8 @@ class Connections(metaclass=SingleInstanceMetaClass):
             https://test_user:password@localhost:19530
 
         """
-        self._alias = {}
-        self._connected_alias = {}
+        self._alias_config = {}
+        self._alias_handlers = {}
         self._env_uri = None
 
         if Config.MILVUS_URI != "":
@@ -162,7 +116,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
             msg = f"port number {port} out of range, valid range [0, 65535)"
             raise ConnectionConfigException(message=msg)
 
-    def __parse_address_from_uri(self, uri: str) -> (str, parse.ParseResult):
+    def __parse_address_from_uri(self, uri: str) -> Tuple[str, parse.ParseResult]:
         illegal_uri_msg = (
             "Illegal uri: [{}], expected form 'http[s]://[user:password@]example.com[:12345]'"
         )
@@ -227,7 +181,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
                 config.get("port", ""),
             )
 
-            if alias in self._connected_alias and self._alias[alias].get("address") != addr:
+            if alias in self._alias_handlers and self._alias_config[alias].get("address") != addr:
                 raise ConnectionConfigException(message=ExceptionsMessage.ConnDiffConf % alias)
 
             alias_config = {
@@ -238,7 +192,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
             if parsed_uri is not None and parsed_uri.scheme == "https":
                 alias_config["secure"] = True
 
-            self._alias[alias] = alias_config
+            self._alias_config[alias] = alias_config
 
     def __get_full_address(
         self,
@@ -246,7 +200,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
         uri: str = "",
         host: str = "",
         port: str = "",
-    ) -> (str, parse.ParseResult):
+    ) -> Tuple[str, parse.ParseResult]:
         if address != "":
             if not is_legal_address(address):
                 raise ConnectionConfigException(
@@ -281,8 +235,19 @@ class Connections(metaclass=SingleInstanceMetaClass):
         if not isinstance(alias, str):
             raise ConnectionConfigException(message=ExceptionsMessage.AliasType % type(alias))
 
-        if alias in self._connected_alias:
-            self._connected_alias.pop(alias).close()
+        if alias in self._alias_handlers:
+            self._alias_handlers.pop(alias).close()
+
+    async def async_disconnect(self, alias: str):
+        if not isinstance(alias, str):
+            raise ConnectionConfigException(message=ExceptionsMessage.AliasType % type(alias))
+
+        if alias in self._alias_handlers:
+            await self._alias_handlers.pop(alias).close()
+
+    async def async_remove_connection(self, alias: str):
+        await self.async_disconnect(alias)
+        self._alias_config.pop(alias, None)
 
     def remove_connection(self, alias: str):
         """Removes connection from the registry.
@@ -294,7 +259,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
             raise ConnectionConfigException(message=ExceptionsMessage.AliasType % type(alias))
 
         self.disconnect(alias)
-        self._alias.pop(alias, None)
+        self._alias_config.pop(alias, None)
 
     def connect(
         self,
@@ -303,61 +268,64 @@ class Connections(metaclass=SingleInstanceMetaClass):
         password: str = "",
         db_name: str = "default",
         token: str = "",
+        _async: bool = False,
+        _unbind_with_db: bool = False,
         **kwargs,
     ) -> None:
-        """
-        Constructs a milvus connection and register it under given alias.
+        """Constructs a milvus connection and register it under given alias.
 
-        :param alias: The name of milvus connection
-        :type  alias: str
+        Args:
+            alias (str): Default to "default". The name of connection. Each alias corresponds to one
+                connection.
+            user (str, Optional): The user of milvus server.
+            password (str, Optional): The password of milvus server.
+            token (str, Optional): Serving as the key for authentication.
+            db_name (str): The database name of milvus server.
+            _async (bool, Optional): Whether to create an async connection. Default is False.
+            _unbind_with_db (bool, Optional): Whether the alias should be bound with a database.
+                Default is False.
 
-        :param kwargs:
-            * *address* (``str``) -- Optional. The actual address of Milvus instance.
-                Example address: "localhost:19530"
-            * *uri* (``str``) -- Optional. The uri of Milvus instance.
-                Example uri: "http://localhost:19530", "tcp:localhost:19530", "https://ok.s3.south.com:19530".
-            * *host* (``str``) -- Optional. The host of Milvus instance.
-                Default at "localhost", PyMilvus will fill in the default host
-                if only port is provided.
-            * *port* (``str/int``) -- Optional. The port of Milvus instance.
-                Default at 19530, PyMilvus will fill in the default port if only host is provided.
-            * *secure* (``bool``) --
-                Optional. Default is false. If set to true, tls will be enabled.
-            * *user* (``str``) --
-                Optional. Use which user to connect to Milvus instance. If user and password
-                are provided, we will add related header in every RPC call.
-            * *password* (``str``) --
-                Optional and required when user is provided. The password corresponding to
-                the user.
-            * *token* (``str``) --
-                Optional. Serving as the key for identification and authentication purposes.
-                Whenever a token is furnished, we shall supplement the corresponding header
-                to each RPC call.
-            * *keep_alive* (``bool``) --
-                Optional. Default is false. If set to true, client will keep an alive connection.
-            * *db_name* (``str``) --
-                Optional. default database name of this connection
-            * *client_key_path* (``str``) --
-                Optional. If use tls two-way authentication, need to write the client.key path.
-            * *client_pem_path* (``str``) --
-                Optional. If use tls two-way authentication, need to write the client.pem path.
-            * *ca_pem_path* (``str``) --
-                Optional. If use tls two-way authentication, need to write the ca.pem path.
-            * *server_pem_path* (``str``) --
-                Optional. If use tls one-way authentication, need to write the server.pem path.
-            * *server_name* (``str``) --
-                Optional. If use tls, need to write the common name.
+                - If False (default, for ORM usage):
+                  * The alias config will contain "db_name" key (alias_for_db)
+                  * Compatible with ORM APIs like `using_database()`
+                  * Can be updated via `_update_db_name()`
 
-        :raises NotImplementedError: If handler in connection parameters is not GRPC.
-        :raises ParamError: If pool in connection parameters is not supported.
-        :raises Exception: If server specified in parameters is not ready, we cannot connect to
-                           server.
+                - If True (for MilvusClient/AsyncMilvusClient):
+                  * The alias config will NOT contain "db_name" key (universal_alias)
+                  * Database is managed by client instance, not in connection config
+                  * Cannot be updated via `_update_db_name()` (use `client.use_database()` instead)
 
-        :example:
+            timeout (float, Optional) The timeout for the connection. Default is 10 seconds.
+                Unit: second
+
+            **kwargs:
+                * address (str, Optional) -- The actual address of Milvus instance.
+                   Example: "localhost:19530"
+                * uri (str, Recommanded) -- The uri of Milvus instance.
+                   Example uri: "http://localhost:19530", "tcp:localhost:19530", "https://ok.s3.south.com:19530".
+                * host (str, Optional) -- The host of Milvus instance. Default at "localhost",
+                    PyMilvus will fill in the default host if only port is provided.
+                * port (str/int, Optional) -- The port of Milvus instance. Default at 19530,
+                    PyMilvus will fill in the default port if only host is provided.
+                * keep_alive (bool, Optional) -- Default is false. If set to true,
+                    client will keep an alive connection.
+                * secure (bool, Optional) -- Default is false. If set to true, tls will be enabled.
+                    If use "https://" scheme in uri, secure will be true.
+                * client_key_path (str, Optional) -- Needed when use tls two-way authentication.
+                * client_pem_path (str, Optional) -- Needed when use tls two-way authentication.
+                * ca_pem_path (str, Optional) -- Needed when use tls two-way authentication.
+                * server_pem_path (str, Optional) -- Needed when use tls one-way authentication.
+                * server_name (str, Optional) -- Needed when enabled tls.
+
+        Example:
             >>> from pymilvus import connections
-            >>> connections.connect("test", host="localhost", port="19530")
-        """
+            >>> connections.connect("test", uri="http://localhost:19530", token="abcdefg")
 
+        Raises:
+            ConnectionConfigException: If connection parameters are illegal.
+            MilvusException: If anything goes wrong.
+
+        """
         if kwargs.get("uri") and parse.urlparse(kwargs["uri"]).scheme.lower() not in [
             "unix",
             "http",
@@ -365,7 +333,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
             "tcp",
             "grpc",
         ]:
-            # start and connect milvuslite
+            # start milvuslite
             if not kwargs["uri"].endswith(".db"):
                 raise ConnectionConfigException(
                     message=f"uri: {kwargs['uri']} is illegal, needs start with [unix, http, https, tcp] or a local file endswith [.db]"
@@ -377,9 +345,16 @@ class Connections(metaclass=SingleInstanceMetaClass):
                     message=f"Open local milvus failed, dir: {parent_path} not exists"
                 )
 
-            from milvus_lite.server_manager import (
-                server_manager_instance,
-            )
+            # ruff: noqa: PLC0415
+            try:
+                from milvus_lite.server_manager import (
+                    server_manager_instance,
+                )
+            except ImportError as e:
+                raise ConnectionConfigException(
+                    message="milvus-lite is required for local database connections. "
+                    "Please install it with: pip install pymilvus[milvus_lite]"
+                ) from e
 
             local_uri = server_manager_instance.start_and_get_uri(kwargs["uri"])
             if local_uri is None:
@@ -394,22 +369,26 @@ class Connections(metaclass=SingleInstanceMetaClass):
         kwargs_copy["token"] = token
 
         def connect_milvus(**kwargs):
-            gh = GrpcHandler(**kwargs)
+            gh = GrpcHandler(**kwargs) if not _async else AsyncGrpcHandler(**kwargs)
+            exclude_keys = ["password", "token", "keep_alive"]
+            if _unbind_with_db:
+                exclude_keys.append("db_name")
+            config_to_keep = {k: v for k, v in kwargs.items() if k not in exclude_keys}
+            self._alias_handlers[alias] = gh
+            self._alias_config[alias] = config_to_keep
 
             t = kwargs.get("timeout")
             timeout = t if isinstance(t, (int, float)) else Config.MILVUS_CONN_TIMEOUT
 
-            gh._wait_for_channel_ready(timeout=timeout)
-            if kwargs.get("keep_alive", False):
-                gh.register_state_change_callback(
-                    ReconnectHandler(self, alias, kwargs_copy).reconnect_on_idle
-                )
-            kwargs.pop("password")
-            kwargs.pop("token", None)
-            kwargs.pop("db_name", "")
+            if not _async:
+                try:
+                    gh._wait_for_channel_ready(timeout=timeout)
 
-            self._connected_alias[alias] = gh
-            self._alias[alias] = copy.deepcopy(kwargs)
+                    if kwargs.pop("keep_alive", False):
+                        gh.register_reconnect_handler(ReconnectHandler(self, alias, kwargs_copy))
+                except Exception:
+                    self.remove_connection(alias)
+                    raise
 
         def with_config(config: Tuple) -> bool:
             return any(c != "" for c in config)
@@ -425,24 +404,33 @@ class Connections(metaclass=SingleInstanceMetaClass):
         )
 
         # Make sure passed in None doesnt break
-        user, password, token = str(user) or "", str(password) or "", str(token) or ""
+        user = "" if user is None else str(user)
+        password = "" if password is None else str(password)
+        token = "" if token is None else str(token)
 
         # 1st Priority: connection from params
         if with_config(config):
             addr, parsed_uri = self.__get_full_address(*config)
             kwargs["address"] = addr
 
-            if self.has_connection(alias) and self._alias[alias].get("address") != addr:
+            if self.has_connection(alias) and self._alias_config[alias].get("address") != addr:
                 raise ConnectionConfigException(message=ExceptionsMessage.ConnDiffConf % alias)
 
-            # uri might take extra info
             if parsed_uri is not None:
-                # get db_name from uri
+                # Extract user and password from uri
                 user = parsed_uri.username or user
                 password = parsed_uri.password or password
 
-                group = parsed_uri.path.split("/")
-                db_name = group[1] if len(group) > 1 else db_name
+                # Extract db_name from URI path only if appropriate
+                # Priority:
+                # 1. If db_name is explicitly provided and not empty -> use it
+                # 2. If db_name is empty string and URI has path -> use URI path
+                # 3. If db_name is empty string and URI has no path -> use "default"
+                if db_name == "":
+                    group = [segment for segment in parsed_uri.path.split("/") if segment]
+                    # Use first path segment if group exists and fall back to "default" if empty
+                    db_name = group[0] if group else "default"
+                # If db_name is not empty (including "default", "test_db", etc.), keep it as-is
 
                 # Set secure=True if https scheme
                 if parsed_uri.scheme == "https":
@@ -467,8 +455,8 @@ class Connections(metaclass=SingleInstanceMetaClass):
             return
 
         # 3rd Priority, connect to cached configs with provided user and password
-        if alias in self._alias:
-            connect_alias = dict(self._alias[alias].items())
+        if alias in self._alias_config:
+            connect_alias = dict(self._alias_config[alias].items())
             connect_alias["user"] = user
             connect_milvus(**connect_alias, password=password, db_name=db_name, **kwargs)
             return
@@ -487,7 +475,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
             >>> connections.connect("test", host="localhost", port="19530")
             >>> connections.list_connections()
         """
-        return [(k, self._connected_alias.get(k, None)) for k in self._alias]
+        return [(k, self._alias_handlers.get(k, None)) for k in self._alias_config]
 
     def get_connection_addr(self, alias: str):
         """
@@ -510,7 +498,7 @@ class Connections(metaclass=SingleInstanceMetaClass):
         if not isinstance(alias, str):
             raise ConnectionConfigException(message=ExceptionsMessage.AliasType % type(alias))
 
-        return self._alias.get(alias, {})
+        return self._alias_config.get(alias, {})
 
     def has_connection(self, alias: str) -> bool:
         """Check if connection named alias exists.
@@ -530,18 +518,77 @@ class Connections(metaclass=SingleInstanceMetaClass):
         """
         if not isinstance(alias, str):
             raise ConnectionConfigException(message=ExceptionsMessage.AliasType % type(alias))
-        return alias in self._connected_alias
+        return alias in self._alias_handlers
 
-    def _fetch_handler(self, alias: str = Config.MILVUS_CONN_ALIAS) -> GrpcHandler:
+    def _update_db_name(self, alias: str, db_name: str) -> None:
+        """Update the database name for a specific connection alias.
+
+        This method updates the database name for aliases created
+         via ORM APIs (bound with database).
+        It cannot be used for aliases created by
+         MilvusClient/AsyncMilvusClient (unbound), which
+        should use `client.use_database()` instead.
+
+        Args:
+            alias (str): The connection alias to update.
+            db_name (str): The new database name to set.
+
+        Raises:
+            ConnectionConfigException: If alias is not bound with
+            a database or types are invalid.
+            ConnectionNotExistException: If the alias does not exist.
+        """
+        if not isinstance(alias, str):
+            raise ConnectionConfigException(message=ExceptionsMessage.AliasType % type(alias))
+        if not isinstance(db_name, str):
+            raise ConnectionConfigException(
+                message=f"db_name must be a string, got {type(db_name)}"
+            )
+
+        if alias not in self._alias_handlers:
+            raise ConnectionNotExistException(message=ExceptionsMessage.ConnectFirst)
+
+        if alias not in self._alias_config:
+            raise ConnectionConfigException(
+                message=f"Alias {alias} is not bound with a database and cannot update db_name."
+            )
+
+        if "db_name" not in self._alias_config[alias]:
+            raise ConnectionConfigException(
+                message=f"Alias {alias} is not bound with a database (created with _unbind_with_db=True). "
+                f"Cannot update db_name. Use client.use_database() instead."
+            )
+
+        self._alias_config[alias]["db_name"] = db_name
+
+    def _fetch_handler(
+        self, alias: str = Config.MILVUS_CONN_ALIAS
+    ) -> Union[GrpcHandler, AsyncGrpcHandler]:
         """Retrieves a GrpcHandler by alias."""
         if not isinstance(alias, str):
             raise ConnectionConfigException(message=ExceptionsMessage.AliasType % type(alias))
 
-        conn = self._connected_alias.get(alias, None)
+        conn = self._alias_handlers.get(alias, None)
         if conn is None:
             raise ConnectionNotExistException(message=ExceptionsMessage.ConnectFirst)
 
         return conn
+
+    def _generate_call_context(self, alias: str, **kwargs) -> CallContext:
+        """Generate a CallContext from the connection alias configuration.
+
+        Args:
+            alias (str): The name of milvus connection
+            **kwargs:
+                * *client_request_id* (``str``) -- Optional. The client request id.
+
+        Returns:
+            CallContext: The call context with db_name from the connection config.
+        """
+        config = self.get_connection_addr(alias)
+        db_name = config.get("db_name", "")
+        req_id = kwargs.get("client_request_id") or kwargs.get("client-request-id", "")
+        return CallContext(db_name=db_name, client_request_id=req_id)
 
 
 # Singleton Mode in Python

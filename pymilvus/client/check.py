@@ -1,12 +1,38 @@
 import datetime
-import sys
 from typing import Any, Callable, Union
+
+import numpy as np
 
 from pymilvus.exceptions import ParamError
 from pymilvus.grpc_gen import milvus_pb2 as milvus_types
+from pymilvus.settings import Config
 
 from . import entity_helper
 from .singleton_utils import Singleton
+
+_INT64_MIN = -(2**63)
+_INT64_MAX = 2**63 - 1
+
+
+def validate_strs(**kwargs):
+    """validate if all values are legal non-emtpy str"""
+    invalid_pair = {k: v for k, v in kwargs.items() if not validate_str(v)}
+    if invalid_pair:
+        msg = f"Illegal str variables: {invalid_pair}, expect non-empty str"
+        raise ParamError(message=msg)
+
+
+def validate_nullable_strs(**kwargs):
+    """validate if all values are either None or legal non-empty str"""
+    invalid_pair = {k: v for k, v in kwargs.items() if v is not None and not validate_str(v)}
+    if invalid_pair:
+        msg = f"Illegal nullable str variables: {invalid_pair}, expect None or non-empty str"
+        raise ParamError(message=msg)
+
+
+def validate_str(var: Any) -> bool:
+    """check if a variable is legal non-empty str"""
+    return var and isinstance(var, str)
 
 
 def is_legal_address(addr: Any) -> bool:
@@ -48,11 +74,16 @@ def is_correct_date_str(param: str) -> bool:
     except ValueError:
         return False
 
-    return True
+    return False
 
 
 def is_legal_dimension(dim: Any) -> bool:
-    return isinstance(dim, int)
+    try:
+        _ = int(dim)
+    except ValueError:
+        return False
+
+    return True
 
 
 def is_legal_index_size(index_size: Any) -> bool:
@@ -60,7 +91,7 @@ def is_legal_index_size(index_size: Any) -> bool:
 
 
 def is_legal_table_name(table_name: Any) -> bool:
-    return table_name and isinstance(table_name, str)
+    return validate_str(table_name)
 
 
 def is_legal_db_name(db_name: Any) -> bool:
@@ -92,16 +123,30 @@ def is_legal_ids(ids: Any) -> bool:
     if not ids or not isinstance(ids, list):
         return False
 
-    # TODO: Here check id valid value range may not match other SDK
-    for i in ids:
-        if not isinstance(i, (int, str)):
-            return False
-        try:
-            i_ = int(i)
-            if i_ < 0 or i_ > sys.maxsize:
+    first = ids[0]
+    if isinstance(first, bool):
+        return False
+
+    if isinstance(first, (int, np.integer)):
+        for i in ids:
+            if isinstance(i, bool) or not isinstance(i, (int, np.integer)):
                 return False
-        except Exception:
-            return False
+            value = int(i)
+            if not (_INT64_MIN <= value <= _INT64_MAX):
+                return False
+        return True
+
+    if isinstance(first, str):
+        for i in ids:
+            if not isinstance(i, str) or not i or len(i) > Config.MaxVarCharLength:
+                return False
+            try:
+                value = int(i)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not (_INT64_MIN <= value <= _INT64_MAX):
+                return False
+        return True
 
     return True
 
@@ -174,15 +219,18 @@ def is_legal_anns_field(field: Any) -> bool:
 
 
 def is_legal_search_data(data: Any) -> bool:
-    import numpy as np
-
     if entity_helper.entity_is_sparse_matrix(data):
+        return True
+
+    # Support EmbeddingList for array-of-vector searches
+    # Check for EmbeddingList by type name to avoid circular dependency
+    if isinstance(data, list) and len(data) > 0 and type(data[0]).__name__ == "EmbeddingList":
         return True
 
     if not isinstance(data, (list, np.ndarray)):
         return False
 
-    return all(isinstance(vector, (list, bytes, np.ndarray)) for vector in data)
+    return all(isinstance(vector, (list, bytes, np.ndarray, str)) for vector in data)
 
 
 def is_legal_output_fields(output_fields: Any) -> bool:
@@ -218,7 +266,7 @@ def is_legal_round_decimal(round_decimal: Any) -> bool:
 
 
 def is_legal_guarantee_timestamp(ts: Any) -> bool:
-    return ts is None or isinstance(ts, int) and ts >= 0
+    return (ts is None) or (isinstance(ts, int) and ts >= 0)
 
 
 def is_legal_user(user: Any) -> bool:
@@ -271,6 +319,25 @@ def is_legal_operate_privilege_type(operate_privilege_type: Any) -> bool:
     )
 
 
+def is_legal_privilege_group(privilege_group: Any) -> bool:
+    return privilege_group and isinstance(privilege_group, str)
+
+
+def is_legal_privileges(privileges: Any) -> bool:
+    return (
+        privileges
+        and isinstance(privileges, list)
+        and all(is_legal_privilege(p) for p in privileges)
+    )
+
+
+def is_legal_operate_privilege_group_type(operate_privilege_group_type: Any) -> bool:
+    return operate_privilege_group_type in (
+        milvus_types.OperatePrivilegeGroupType.AddPrivilegesToGroup,
+        milvus_types.OperatePrivilegeGroupType.RemovePrivilegesFromGroup,
+    )
+
+
 class ParamChecker(metaclass=Singleton):
     def __init__(self) -> None:
         self.check_dict = {
@@ -315,6 +382,9 @@ class ParamChecker(metaclass=Singleton):
             "timeout": is_legal_timeout,
             "drop_ratio_build": is_legal_drop_ratio,
             "drop_ratio_search": is_legal_drop_ratio,
+            "privilege_group": is_legal_privilege_group,
+            "privileges": is_legal_privileges,
+            "operate_privilege_group_type": is_legal_operate_privilege_group_type,
         }
 
     def check(self, key: str, value: Callable):
@@ -335,3 +405,14 @@ def check_pass_param(*_args: Any, **kwargs: Any) -> None:  # pylint: disable=too
     checker = _get_param_checker()
     for key, value in kwargs.items():
         checker.check(key, value)
+
+
+def check_id_and_data(ids: Any, data: Any) -> None:
+    if ids is not None and data is not None:
+        raise ParamError(message="Either ids or data must be provided, not both")
+    if ids is None and data is None:
+        raise ParamError(message="Either ids or data must be provided")
+    if ids is not None:
+        check_pass_param(ids=ids)
+    if data is not None:
+        check_pass_param(search_data=data)

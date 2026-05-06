@@ -7,11 +7,7 @@
 [![Downloads](https://static.pepy.tech/badge/pymilvus/week)](https://pepy.tech/project/pymilvus)
 
 [![license](https://img.shields.io/hexpm/l/plug.svg?color=green)](https://github.com/milvus-io/pymilvus/blob/master/LICENSE)
-[![Mergify Status][mergify-status]][mergify]
 ![Static Badge](https://img.shields.io/badge/slack-%23py--milvus-blue?style=social&logo=slack&link=https%3A%2F%2Fmilvusio.slack.com%2Farchives%2FC024XTWMT4L)
-
-[mergify]: https://mergify.com
-[mergify-status]: https://img.shields.io/endpoint.svg?url=https://api.mergify.com/v1/badges/milvus-io/pymilvus&style=flat
 
 Python SDK for [Milvus](https://github.com/milvus-io/milvus). To contribute code to this project, please read our [contribution guidelines](https://github.com/milvus-io/milvus/blob/master/CONTRIBUTING.md) first. If you have some ideas or encounter a problem, you can find us in the Slack channel [#py-milvus](https://milvusio.slack.com/archives/C024XTWMT4L).
 
@@ -27,7 +23,9 @@ The following collection shows Milvus versions and recommended PyMilvus versions
 | 2.1.\* | 2.1.3 |
 | 2.2.\* | 2.2.15 |
 | 2.3.\* | 2.3.7 |
-| 2.4.\* | 2.4.4 |
+| 2.4.\* | 2.4.X |
+| 2.5.\* | 2.5.X |
+| 2.6.\* | 2.6.X |
 
 
 ## Installation
@@ -43,7 +41,7 @@ $ pip3 install pymilvus[bulk_writer] # for bulk_writer
 You can install a specific version of PyMilvus by:
 
 ```shell
-$ pip3 install pymilvus==2.4.4
+$ pip3 install pymilvus==2.4.10
 ```
 
 You can upgrade PyMilvus to the latest version by:
@@ -75,30 +73,38 @@ A3.
 $ make install
 ```
 
-Q4. How to check coding styles?
+Q4. How to check and auto-fix the coding styles?
 
 A4.
 ```shell
 make lint
-```
-
-Q5. How to fix the coding styles?
-
-A5
-```shell
 make format
 ```
 
-Q6. How to run unittests?
+Q5. How to set up pre-commit hooks to automatically check and fix the coding styles?
 
-A6
+Once installed, the hooks will automatically run `make format` and `make lint` before each commit. If the checks fail, the commit will be aborted, and you'll need to fix the issues before committing again.
+
+A5. Pre-commit hooks help ensure code quality by automatically running linting and formatting checks before each commit.
+```shell
+# Install pre-commit (if not already installed)
+$ pip install pre-commit
+
+# Install the git hook scripts
+$ pre-commit install
+```
+
+Q7. How to run unittests?
+
+A7
 ```shell
 $ pip install ".[dev]"
 $ make unittest
 ```
-Q7. `zsh: no matches found: pymilvus[model]`, how do I solve this?
 
-A7
+Q8. `zsh: no matches found: pymilvus[model]`, how do I solve this?
+
+A8
 ```shell
 $ pip install "pymilvus[model]"
 ```

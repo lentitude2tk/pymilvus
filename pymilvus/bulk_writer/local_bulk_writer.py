@@ -26,8 +26,7 @@ from .constants import (
     BulkFileType,
 )
 
-logger = logging.getLogger("local_bulk_writer")
-logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class LocalBulkWriter(BulkWriter):
@@ -37,9 +36,10 @@ class LocalBulkWriter(BulkWriter):
         local_path: str,
         chunk_size: int = 128 * MB,
         file_type: BulkFileType = BulkFileType.PARQUET,
+        config: Optional[dict] = None,
         **kwargs,
     ):
-        super().__init__(schema, chunk_size, file_type, **kwargs)
+        super().__init__(schema, chunk_size, file_type, config, **kwargs)
         self._local_path = local_path
         self._uuid = str(uuid.uuid4())
         self._flush_count = 0
@@ -94,7 +94,7 @@ class LocalBulkWriter(BulkWriter):
         # in anync mode, the flush thread is asynchronously, other threads can
         # continue to append if the new buffer size is less than target size
         with self._working_thread_lock:
-            if super().buffer_size > super().chunk_size:
+            if self.buffer_size > self.chunk_size:
                 self.commit(_async=True)
 
     def commit(self, **kwargs):
@@ -106,10 +106,10 @@ class LocalBulkWriter(BulkWriter):
             time.sleep(1.0)
 
         logger.info(
-            f"Prepare to flush buffer, row_count: {super().buffer_row_count}, size: {super().buffer_size}"
+            f"Prepare to flush buffer, row_count: {self.buffer_row_count}, size: {self.buffer_size}"
         )
         _async = kwargs.get("_async", False)
-        call_back = kwargs.get("call_back", None)
+        call_back = kwargs.get("call_back")
 
         x = Thread(target=self._flush, args=(call_back,))
         logger.info(f"Flush thread begin, name: {x.name}")

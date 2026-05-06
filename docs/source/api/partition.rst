@@ -5,7 +5,7 @@ Partition
 A partition is a group of entities in one collection with the same label. Entities inserted without a label
 will be tagged a default label by milvus.
 
-Partition is managable, which means managing a group of entities with the same label in one collection.
+Partition is manageable, which means managing a group of entities with the same label in one collection.
 
 Constructor
 -----------
@@ -50,7 +50,7 @@ Methods
 +--------------------------------------------+--------------------------------------------------------------------------+
 | `delete() <#pymilvus.Partition.delete>`_   | Delete entities with an expression condition.                            |
 +--------------------------------------------+--------------------------------------------------------------------------+
-| `upsert() <#pymilvus.Collection.upsert>`_  |Upsert data of collection.                                               |
+| `upsert() <#pymilvus.Collection.upsert>`_  | Upsert data of collection.                                               |
 +--------------------------------------------+--------------------------------------------------------------------------+
 | `search() <#pymilvus.Partition.search>`_   | Vector similarity search with an optional boolean expression as filters. |
 +--------------------------------------------+--------------------------------------------------------------------------+
@@ -64,4 +64,3 @@ API Refereences
 .. autoclass:: pymilvus.Partition
    :member-order: bysource
    :members: description, name, is_empty, num_entities, drop, load, release, insert, search, query, delete
-

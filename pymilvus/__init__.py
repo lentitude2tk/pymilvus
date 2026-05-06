@@ -10,14 +10,28 @@
 # or implied. See the License for the specific language governing permissions and limitations under
 # the License.
 
+# Ensure `pymilvus` is a namespace package other distributions (like `pymilvus.model`) can
+# participate in.
+from pkgutil import extend_path
+
+__path__ = extend_path(__path__, __name__)
+
 from .client import __version__
-from .client.abstract import AnnSearchRequest, Hit, Hits, RRFRanker, SearchResult, WeightedRanker
+from .client.abstract import AnnSearchRequest, RRFRanker, WeightedRanker
 from .client.asynch import SearchFuture
+from .client.field_ops import FieldOp, FieldOpType
 from .client.prepare import Prepare
-from .client.stub import Milvus
+from .client.search_aggregation import (
+    AggregationBucket,
+    AggregationHit,
+    SearchAggregation,
+    TopHits,
+)
+from .client.search_result import Hit, Hits, SearchResult
 from .client.types import (
     BulkInsertState,
     DataType,
+    FunctionType,
     Group,
     IndexType,
     Replica,
@@ -30,7 +44,7 @@ from .exceptions import (
     MilvusException,
     MilvusUnavailableException,
 )
-from .milvus_client import MilvusClient
+from .milvus_client import AsyncMilvusClient, MilvusClient
 from .orm import db, utility
 from .orm.collection import Collection
 from .orm.connections import Connections, connections
@@ -38,7 +52,15 @@ from .orm.future import MutationFuture
 from .orm.index import Index
 from .orm.partition import Partition
 from .orm.role import Role
-from .orm.schema import CollectionSchema, FieldSchema
+from .orm.schema import (
+    CollectionSchema,
+    FieldSchema,
+    Function,
+    FunctionScore,
+    LexicalHighlighter,
+    SemanticHighlighter,
+    StructFieldSchema,
+)
 from .orm.utility import (
     create_resource_group,
     create_user,
@@ -71,63 +93,75 @@ from .orm.utility import (
 from .settings import Config as DefaultConfig
 
 __all__ = [
+    "AggregationBucket",
+    "AggregationHit",
+    "AnnSearchRequest",
+    "AsyncMilvusClient",
+    "BulkInsertState",
     "Collection",
+    "CollectionSchema",
+    "Connections",
+    "DataType",
+    "DefaultConfig",
+    "ExceptionsMessage",
+    "FieldOp",
+    "FieldOpType",
+    "FieldSchema",
+    "Function",
+    "FunctionScore",
+    "FunctionType",
+    "Group",
+    "Hit",
+    "Hits",
     "Index",
+    "IndexType",
+    "LexicalHighlighter",
+    "MilvusClient",
+    "MilvusException",
+    "MilvusUnavailableException",
+    "MutationFuture",
     "Partition",
+    "Prepare",
+    "RRFRanker",
+    "Replica",
+    "ResourceGroupInfo",
+    "Role",
+    "SearchAggregation",
+    "SearchFuture",
+    "SearchResult",
+    "SemanticHighlighter",
+    "Shard",
+    "Status",
+    "StructFieldSchema",
+    "TopHits",
+    "WeightedRanker",
+    "__version__",
     "connections",
-    "loading_progress",
-    "index_building_progress",
-    "wait_for_index_building_complete",
+    "create_resource_group",
+    "create_user",
+    "db",
+    "delete_user",
+    "describe_resource_group",
     "drop_collection",
+    "drop_resource_group",
     "has_collection",
-    "list_collections",
-    "wait_for_loading_complete",
     "has_partition",
+    "hybridts_to_datetime",
+    "hybridts_to_unixtime",
+    "index_building_progress",
+    "list_collections",
+    "list_resource_groups",
+    "list_usernames",
+    "loading_progress",
+    "mkts_from_datetime",
     "mkts_from_hybridts",
     "mkts_from_unixtime",
-    "mkts_from_datetime",
-    "hybridts_to_unixtime",
-    "hybridts_to_datetime",
     "reset_password",
-    "create_user",
-    "update_password",
-    "update_resource_groups",
-    "delete_user",
-    "list_usernames",
-    "SearchResult",
-    "Hits",
-    "Hit",
-    "Replica",
-    "Group",
-    "Shard",
-    "FieldSchema",
-    "CollectionSchema",
-    "SearchFuture",
-    "MutationFuture",
-    "utility",
-    "db",
-    "DefaultConfig",
-    "Role",
-    "ExceptionsMessage",
-    "MilvusUnavailableException",
-    "BulkInsertState",
-    "create_resource_group",
-    "drop_resource_group",
-    "describe_resource_group",
-    "list_resource_groups",
     "transfer_node",
     "transfer_replica",
-    "Milvus",
-    "Prepare",
-    "Status",
-    "DataType",
-    "MilvusException",
-    "__version__",
-    "MilvusClient",
-    "ResourceGroupInfo",
-    "Connections",
-    "IndexType",
-    "AnnSearchRequest",
-    "RRFRanker",
-    "WeightedRanker",
+    "update_password",
+    "update_resource_groups",
+    "utility",
+    "wait_for_index_building_complete",
+    "wait_for_loading_complete",
 ]
